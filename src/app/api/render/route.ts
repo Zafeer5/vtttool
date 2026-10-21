@@ -62,34 +62,52 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (imageFiles.length > 1000) {
+      return NextResponse.json(
+        { success: false, error: 'Maximum 1000 images allowed per render project.' },
+        { status: 400 }
+      );
+    }
+
     // Create unique temp directory
     const tempDir = os.tmpdir();
     const randomSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     tempDirPath = path.join(tempDir, `vtttool-render-${randomSuffix}`);
     await fs.promises.mkdir(tempDirPath, { recursive: true });
 
-    // Save image files in parallel across asynchronous I/O
+    // Save image files with bounded concurrency (4 parallel workers) to prevent memory exhaustion
     const numSlides = Math.min(imageFiles.length, durations.length);
     const slideItems: { image: string; duration: number }[] = new Array(numSlides);
+    const allowedImageExts = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp']);
 
-    const writeImagePromises = imageFiles.slice(0, numSlides).map(async (imgFile, i) => {
-      const extMatch = imgFile.name.match(/\.([a-zA-Z0-9]+)$/);
-      const ext = extMatch ? `.${extMatch[1].toLowerCase()}` : '.jpg';
-      const imgPath = path.join(tempDirPath!, `input_${String(i).padStart(3, '0')}${ext}`);
-      const buffer = Buffer.from(await imgFile.arrayBuffer());
-      await fs.promises.writeFile(imgPath, buffer);
-      slideItems[i] = {
-        image: imgPath,
-        duration: durations[i],
-      };
+    const imageIndices = Array.from({ length: numSlides }, (_, i) => i);
+    let currentIdx = 0;
+    const workerCount = Math.min(4, numSlides);
+
+    const imageWorkers = Array.from({ length: workerCount }, async () => {
+      while (currentIdx < numSlides) {
+        const i = currentIdx++;
+        const imgFile = imageFiles[i];
+        const rawExt = imgFile.name.match(/\.([a-zA-Z0-9]+)$/)?.[1]?.toLowerCase() || 'jpg';
+        const ext = allowedImageExts.has(rawExt) ? `.${rawExt}` : '.jpg';
+        const imgPath = path.join(tempDirPath!, `input_${String(i).padStart(4, '0')}${ext}`);
+        const buffer = Buffer.from(await imgFile.arrayBuffer());
+        await fs.promises.writeFile(imgPath, buffer);
+        slideItems[i] = {
+          image: imgPath,
+          duration: durations[i],
+        };
+      }
     });
 
-    // Save audio file if provided in parallel
+    // Save audio file if provided
     let audioPath: string | null = null;
     let writeAudioPromise: Promise<void> | null = null;
     if (audioFile && audioFile.size > 0) {
       const audioExtMatch = audioFile.name.match(/\.([a-zA-Z0-9]+)$/);
-      const audioExt = audioExtMatch ? `.${audioExtMatch[1].toLowerCase()}` : '.wav';
+      const rawAudioExt = audioExtMatch ? audioExtMatch[1].toLowerCase() : 'wav';
+      const allowedAudioExts = new Set(['wav', 'mp3', 'm4a', 'aac', 'ogg', 'flac']);
+      const audioExt = allowedAudioExts.has(rawAudioExt) ? `.${rawAudioExt}` : '.wav';
       audioPath = path.join(tempDirPath, `voiceover${audioExt}`);
       writeAudioPromise = (async () => {
         const audioBuffer = Buffer.from(await audioFile.arrayBuffer());
@@ -97,7 +115,7 @@ export async function POST(req: NextRequest) {
       })();
     }
 
-    // Save logo watermark file if provided in parallel
+    // Save logo watermark file if provided
     const logoFile = formData.get('logo') as File | null;
     const logoSettingsRaw = formData.get('logoSettings') as string | null;
     let logoData: any = null;
@@ -113,7 +131,8 @@ export async function POST(req: NextRequest) {
     let writeLogoPromise: Promise<void> | null = null;
     if (logoFile && logoFile.size > 0) {
       const logoExtMatch = logoFile.name.match(/\.([a-zA-Z0-9]+)$/);
-      const logoExt = logoExtMatch ? `.${logoExtMatch[1].toLowerCase()}` : '.png';
+      const rawLogoExt = logoExtMatch ? logoExtMatch[1].toLowerCase() : 'png';
+      const logoExt = allowedImageExts.has(rawLogoExt) ? `.${rawLogoExt}` : '.png';
       logoPath = path.join(tempDirPath, `watermark_logo${logoExt}`);
       if (!logoData) {
         logoData = { enabled: true };
@@ -127,7 +146,7 @@ export async function POST(req: NextRequest) {
     }
 
     await Promise.all([
-      ...writeImagePromises,
+      Promise.all(imageWorkers),
       ...(writeAudioPromise ? [writeAudioPromise] : []),
       ...(writeLogoPromise ? [writeLogoPromise] : []),
     ]);
@@ -209,8 +228,21 @@ export async function POST(req: NextRequest) {
     }
 
 
-    const destinationFolder = formData.get('destinationFolder') as string | null;
-    const outputFileName = formData.get('outputFileName') as string | null;
+    const rawDestinationFolder = formData.get('destinationFolder') as string | null;
+    let safeDestinationFolder: string | null = null;
+    if (rawDestinationFolder && typeof rawDestinationFolder === 'string') {
+      try {
+        const resolved = path.resolve(rawDestinationFolder);
+        if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+          safeDestinationFolder = resolved;
+        }
+      } catch {}
+    }
+    const rawOutputFileName = formData.get('outputFileName') as string | null;
+    const safeOutputFileName = rawOutputFileName
+      ? path.basename(rawOutputFileName).replace(/[^a-zA-Z0-9._\-\s]/g, '_')
+      : null;
+
     const job = await createRenderJob({
       tempDirPath,
       outputFilePath,
@@ -223,8 +255,8 @@ export async function POST(req: NextRequest) {
       firstImagePath: slideItems[0]?.image || null,
       isZip,
       exportMode: exportMode as 'single' | 'clips_zip',
-      destinationFolder,
-      outputFileName,
+      destinationFolder: safeDestinationFolder,
+      outputFileName: safeOutputFileName,
     });
     tempDirPath = null;
 

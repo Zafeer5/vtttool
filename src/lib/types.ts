@@ -69,7 +69,7 @@ export interface TranscriptVersion {
 }
 
 export interface ParallelTranscripts {
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface SyncMatch {
@@ -122,7 +122,9 @@ export type RenderStage =
   | 'encoding'
   | 'finalizing'
   | 'completed'
-  | 'error';
+  | 'error'
+  | 'cancelled'
+  | 'interrupted';
 
 export interface RenderStats {
   currentFrame?: number;
@@ -160,7 +162,7 @@ export interface QueueRenderItem {
   slideCount: number;
   duration: number;
   createdAt: number;
-  status: 'queued' | 'preparing' | 'rendering' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'preparing' | 'rendering' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   progress: number;
   message: string;
   stats?: RenderStats;

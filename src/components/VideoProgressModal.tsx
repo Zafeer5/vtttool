@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   X,
   CheckCircle2,
@@ -9,6 +9,13 @@ import {
   RotateCcw,
   Film,
   Archive,
+  Clock,
+  Layers,
+  ArrowRight,
+  Gauge,
+  Activity,
+  AlertTriangle,
+  StopCircle,
 } from 'lucide-react';
 import { RenderProgress, SyncMatch, ExportMode } from '../lib/types';
 
@@ -22,6 +29,7 @@ interface VideoProgressModalProps {
   outputUrl?: string | null;
   outputBlob?: Blob | null;
   exportMode?: ExportMode | null;
+  jobId?: string | null;
 }
 
 export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
@@ -33,75 +41,85 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
   outputUrl,
   outputBlob,
   exportMode = 'single',
+  jobId,
 }) => {
+  const activeJobId = jobId || progress.jobId || null;
   const isCompleted = progress.stage === 'completed';
   const isError = progress.stage === 'error';
+  const isCancelled = progress.stage === 'cancelled';
+  const isInterrupted = progress.stage === 'interrupted';
+  const isTerminal = isCompleted || isError || isCancelled || isInterrupted;
 
-  // Smooth, monotonic linear progress tracking (never resets or stutters backwards)
-  const [smoothPercentage, setSmoothPercentage] = useState(0);
-  const maxPercentRef = useRef(0);
-  const progressBarFillRef = useRef<HTMLDivElement>(null);
-  const percentageTextRef = useRef<HTMLSpanElement>(null);
-  const lastStateUpdateTimeRef = useRef(0);
+  // Track active job ID and strictly reset monotonic guards per job ID
+  const currentJobIdRef = useRef<string | null>(null);
+  const maxPercentRef = useRef<number>(0);
+  const startTimeRef = useRef<number>(Date.now());
+  const [smoothPercentage, setSmoothPercentage] = useState<number>(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
 
   // Video object URL for inline HTML5 video player
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
 
+  // Reset or initialize state when job ID changes or modal opens
   useEffect(() => {
     if (!isOpen) {
+      currentJobIdRef.current = null;
       maxPercentRef.current = 0;
       setSmoothPercentage(0);
-      if (progressBarFillRef.current) {
-        progressBarFillRef.current.style.width = '0%';
-      }
-      if (percentageTextRef.current) {
-        percentageTextRef.current.innerText = '0%';
-      }
+      setElapsedSeconds(0);
       return;
     }
 
+    if (activeJobId !== currentJobIdRef.current) {
+      currentJobIdRef.current = activeJobId;
+      maxPercentRef.current = 0;
+      startTimeRef.current = Date.now();
+      setElapsedSeconds(0);
+      const initial = typeof progress.percentage === 'number' ? Math.max(0, Math.min(100, Math.round(progress.percentage))) : 0;
+      maxPercentRef.current = initial;
+      setSmoothPercentage(initial);
+    }
+  }, [isOpen, activeJobId, progress.percentage]);
+
+  // Elapsed time ticker
+  useEffect(() => {
+    if (!isOpen || isTerminal) return;
+
+    const interval = setInterval(() => {
+      const sec = Math.max(0, Math.floor((Date.now() - startTimeRef.current) / 1000));
+      setElapsedSeconds(sec);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isOpen, isTerminal]);
+
+  // Monotonic progress progression strictly within one job
+  useEffect(() => {
+    if (!isOpen) return;
+
     if (isCompleted) {
       maxPercentRef.current = 100;
-      if (progressBarFillRef.current) {
-        progressBarFillRef.current.style.width = '100%';
-      }
-      if (percentageTextRef.current) {
-        percentageTextRef.current.innerText = '100%';
-      }
       setSmoothPercentage(100);
       return;
     }
 
-    if (isError) {
+    if (isError || isCancelled || isInterrupted) {
+      // Preserve last achieved percentage, do not drop to 0 or advance to 100
       return;
     }
 
-    // Monotonic progression guard: progress strictly moves forward (Math.max)
     const raw = typeof progress.percentage === 'number' ? progress.percentage : 0;
-    const clamped = Math.max(3, Math.min(99, Math.round(raw)));
-    if (clamped > maxPercentRef.current) {
-      maxPercentRef.current = clamped;
+    // Real percentage without artificial minimum clamping (starts at 0%)
+    const rounded = Math.max(0, Math.min(99, Math.round(raw)));
 
-      // 1. Direct DOM manipulation: bypass React state churn for 60fps rendering without UI thread choke
-      if (progressBarFillRef.current) {
-        progressBarFillRef.current.style.width = `${clamped}%`;
-      }
-      if (percentageTextRef.current) {
-        percentageTextRef.current.innerText = `${clamped}%`;
-      }
-
-      // 2. Throttled state update for React render tree (100ms threshold)
-      const now = performance.now();
-      if (now - lastStateUpdateTimeRef.current > 100 || clamped >= 95) {
-        lastStateUpdateTimeRef.current = now;
-        setSmoothPercentage(clamped);
-      }
+    if (rounded >= maxPercentRef.current) {
+      maxPercentRef.current = rounded;
+      setSmoothPercentage(rounded);
     }
-  }, [progress.percentage, isCompleted, isError, isOpen]);
+  }, [progress.percentage, isCompleted, isError, isCancelled, isInterrupted, isOpen]);
 
   // Manage video preview URL lifecycle
   useEffect(() => {
-    // If we have an API streaming endpoint from the server, use it directly for hardware-accelerated streaming & timeline scrubbing
     const directApiUrl =
       outputUrl && outputUrl.startsWith('/api/renders/')
         ? outputUrl
@@ -132,16 +150,44 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
-        if (isCompleted || isError) {
+        if (isTerminal) {
           onClose?.();
         } else {
-          onCancel?.();
+          // In active rendering, Escape closes modal without aborting render (Continue in Background)
+          onClose?.();
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isCompleted, isError, onClose, onCancel]);
+  }, [isOpen, isTerminal, onClose]);
+
+  // Telemetry Calculations: ETA & Speed
+  const etaText = useMemo(() => {
+    if (isTerminal) return null;
+    const stats = progress.stats;
+    if (stats?.currentFrame && stats.totalFrames && stats.totalFrames > stats.currentFrame) {
+      const remainingFrames = stats.totalFrames - stats.currentFrame;
+      let effectiveFps = stats.fps && stats.fps > 0 ? stats.fps : 0;
+      if (effectiveFps <= 0 && elapsedSeconds > 3 && stats.currentFrame > 15) {
+        effectiveFps = stats.currentFrame / elapsedSeconds;
+      }
+      if (effectiveFps > 0) {
+        const remainingSec = Math.round(remainingFrames / effectiveFps);
+        if (remainingSec < 60) return `~${remainingSec}s left`;
+        const mins = Math.floor(remainingSec / 60);
+        const secs = remainingSec % 60;
+        return `~${mins}m ${secs}s left`;
+      }
+    }
+    return null;
+  }, [progress.stats, elapsedSeconds, isTerminal]);
+
+  const formatElapsed = (sec: number) => {
+    const mins = Math.floor(sec / 60);
+    const secs = sec % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   if (!isOpen) return null;
 
@@ -170,7 +216,6 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
         : `${outputFileName.trim().replace(/\.(mp4|zip)$/i, '')}${fileExt}`
       : defaultName;
 
-    // 1. If direct server API URL is available, trigger direct download with attachment header
     if (directApiUrl) {
       const apiFileUrl = `${directApiUrl}${directApiUrl.includes('?') ? '&' : '?'}download=1&filename=${encodeURIComponent(cleanName)}`;
       const a = document.createElement('a');
@@ -182,7 +227,6 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
       return;
     }
 
-    // 2. If Blob is in memory, download directly from object URL
     if (blob) {
       const tempUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -195,7 +239,6 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
       return;
     }
 
-    // 3. Fallback to active preview URL
     if (videoPreviewUrl) {
       const a = document.createElement('a');
       a.href = videoPreviewUrl;
@@ -206,14 +249,43 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
     }
   };
 
+  // Stage display label and styling
+  const stageInfo = (() => {
+    if (isCompleted) {
+      return { label: 'Completed', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' };
+    }
+    if (isError) {
+      return { label: 'Failed', color: 'text-rose-400 bg-rose-500/10 border-rose-500/30' };
+    }
+    if (isCancelled) {
+      return { label: 'Cancelled', color: 'text-slate-400 bg-slate-800 border-slate-700' };
+    }
+    if (isInterrupted) {
+      return { label: 'Interrupted', color: 'text-amber-400 bg-amber-500/10 border-amber-500/30' };
+    }
+    switch (progress.stage) {
+      case 'queued':
+        return { label: 'Queued in line', color: 'text-amber-400 bg-amber-500/10 border-amber-500/30' };
+      case 'preparing':
+      case 'loading-ffmpeg':
+        return { label: 'Preparing media', color: 'text-sky-400 bg-sky-500/10 border-sky-500/30' };
+      case 'finalizing':
+        return { label: 'Finalizing video', color: 'text-purple-400 bg-purple-500/10 border-purple-500/30' };
+      case 'encoding':
+      default:
+        return { label: 'Encoding frames', color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30' };
+    }
+  })();
+
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="progress-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn transition-all duration-300"
       onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          if (isCompleted || isError) {
-            onClose?.();
-          }
+        if (e.target === e.currentTarget && isTerminal) {
+          onClose?.();
         }
       }}
     >
@@ -221,126 +293,150 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
         className={`w-full rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl relative overflow-hidden transition-all duration-300 ease-out ${
           isCompleted
             ? 'max-w-2xl p-6 sm:p-8 space-y-6'
-            : isError
-            ? 'max-w-md p-6 sm:p-7 space-y-6'
-            : 'max-w-md p-6 sm:p-7 space-y-6'
+            : 'max-w-md p-6 sm:p-7 space-y-5'
         }`}
       >
         {/* Subtle close button */}
         <button
           type="button"
-          onClick={isCompleted || isError ? onClose : onCancel}
-          aria-label="Close dialog"
+          onClick={isTerminal ? onClose : onClose}
+          aria-label={isTerminal ? 'Close dialog' : 'Continue in background'}
+          title={isTerminal ? 'Close dialog' : 'Continue in background'}
           className="absolute top-4 right-4 p-2 rounded-xl text-slate-400 hover:text-white bg-slate-800/40 hover:bg-slate-800 border border-slate-700/50 transition-colors cursor-pointer z-10"
         >
           <X className="w-4 h-4" />
         </button>
 
-        {/* -------------------- 1. ACTIVE RENDERING STATE (MINIMALIST & CLEAN) -------------------- */}
-        {!isCompleted && !isError && (
-          <div className="space-y-6 pt-1">
-            {/* Header: Title and Percentage */}
-            <div className="flex items-center justify-between">
+        {/* -------------------- 1. ACTIVE RENDERING STATE -------------------- */}
+        {!isTerminal && (
+          <div className="space-y-5 pt-1" role="status" aria-live="polite">
+            {/* Header: Title, Stage Badge, and Percentage */}
+            <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shadow-lg shadow-indigo-500/10">
-                  <Film className="w-4 h-4 animate-pulse text-indigo-400" />
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shadow-lg shadow-indigo-500/10 shrink-0">
+                  <Film className="w-5 h-5 animate-pulse text-indigo-400" />
                 </div>
-                <h3 className="text-base sm:text-lg font-semibold text-white tracking-tight">
-                  Rendering Synchronized Video...
-                </h3>
+                <div>
+                  <h3 id="progress-modal-title" className="text-base sm:text-lg font-semibold text-white tracking-tight">
+                    {outputFileName || 'Rendering Slideshow...'}
+                  </h3>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${stageInfo.color}`}>
+                      {stageInfo.label}
+                    </span>
+                    {activeJobId && (
+                      <span className="font-mono text-[10px] text-slate-500 truncate max-w-[120px]">
+                        #{activeJobId.substring(0, 8)}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
-              <span
-                ref={percentageTextRef}
-                className="font-mono text-xl sm:text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400"
-              >
+              <span className="font-mono text-2xl sm:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400 shrink-0">
                 {smoothPercentage}%
               </span>
             </div>
 
-            {/* Sleek, Modern High-Performance Progress Bar with direct DOM GPU fill */}
-            <div className="h-2 w-full rounded-full bg-slate-950 border border-slate-800/80 overflow-hidden relative shadow-inner shadow-black/80">
-              <div
-                ref={progressBarFillRef}
-                className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 shadow-[0_0_12px_rgba(129,140,248,0.5)] transition-all duration-300 ease-out relative overflow-hidden"
-                style={{ width: `${smoothPercentage}%` }}
-              >
-                {/* Subtle continuous shimmer highlight */}
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse" />
+            {/* High-Performance Progress Bar with monotonic guarantee */}
+            <div className="space-y-1.5">
+              <div className="h-2.5 w-full rounded-full bg-slate-950 border border-slate-800/80 overflow-hidden relative shadow-inner shadow-black/80">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 shadow-[0_0_12px_rgba(129,140,248,0.5)] transition-all duration-300 ease-out relative overflow-hidden"
+                  style={{ width: `${smoothPercentage}%` }}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse" />
+                </div>
+              </div>
+
+              {/* Progress Subtext & Telemetry */}
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span className="truncate max-w-[240px] text-slate-300 font-medium">
+                  {progress.message || 'Processing video compilation...'}
+                </span>
+                <span className="font-mono text-slate-400 shrink-0">
+                  Elapsed: <strong className="text-slate-200">{formatElapsed(elapsedSeconds)}</strong>
+                </span>
               </div>
             </div>
 
-            {/* Standard Output Logs & Status Variable Matrix (Step 2) */}
-            <div className="space-y-1.5 pt-0.5">
-              <p className="text-xs text-slate-300 font-medium truncate">
-                {progress.message || 'Preparing video compilation...'}
-              </p>
-              {progress.stats && (
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-slate-400">
-                  {progress.stats.currentFrame !== undefined && progress.stats.totalFrames ? (
-                    <span>
-                      Frames: <strong className="text-indigo-300 font-semibold">{progress.stats.currentFrame}</strong>/{progress.stats.totalFrames}
-                    </span>
-                  ) : null}
-                  {progress.stats.fps ? (
-                    <span>
-                      FPS: <strong className="text-emerald-400 font-semibold">{progress.stats.fps}</strong>
-                    </span>
-                  ) : null}
-                  {progress.stats.speed ? (
-                    <span>
-                      Speed: <strong className="text-purple-300 font-semibold">{progress.stats.speed}</strong>
-                    </span>
-                  ) : null}
-                  {progress.stats.bitrate ? (
-                    <span>
-                      Bitrate: <strong className="text-pink-300 font-semibold">{progress.stats.bitrate}</strong>
-                    </span>
-                  ) : null}
+            {/* Live Metrics Grid (Frames, FPS, Speed, ETA) */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] font-mono">
+              {progress.stats?.currentFrame !== undefined && progress.stats?.totalFrames ? (
+                <div className="col-span-2 sm:col-span-1">
+                  <span className="text-[10px] uppercase text-slate-500 block">Frames</span>
+                  <span className="text-indigo-300 font-semibold">
+                    {progress.stats.currentFrame} / {progress.stats.totalFrames}
+                  </span>
+                </div>
+              ) : (
+                <div className="col-span-2 sm:col-span-1">
+                  <span className="text-[10px] uppercase text-slate-500 block">Status</span>
+                  <span className="text-indigo-300 font-semibold capitalize">{progress.stage}</span>
                 </div>
               )}
+
+              <div>
+                <span className="text-[10px] uppercase text-slate-500 block">Speed</span>
+                <span className="text-emerald-400 font-semibold">
+                  {progress.stats?.fps ? `${progress.stats.fps} fps` : progress.stats?.speed || '—'}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-[10px] uppercase text-slate-500 block">ETA</span>
+                <span className="text-purple-300 font-semibold">{etaText || 'Calculating...'}</span>
+              </div>
             </div>
 
-            {/* Single Clean Cancel Action */}
-            <div className="pt-1">
+            {/* Action Buttons: Background continue + Safe Cancel */}
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30 transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/20"
+              >
+                <span>Continue in Background</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+
               <button
                 type="button"
                 onClick={onCancel}
-                className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-slate-400 hover:text-red-300 bg-slate-800/40 hover:bg-red-500/10 border border-slate-800 hover:border-red-500/20 transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5"
+                className="py-2.5 px-3.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-rose-300 bg-slate-800/40 hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/20 transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5"
+                title="Cancel Render Process"
               >
-                <X className="w-3.5 h-3.5" />
+                <StopCircle className="w-3.5 h-3.5" />
                 <span>Cancel</span>
               </button>
             </div>
           </div>
         )}
 
-        {/* -------------------- 2. COMPLETED STATE (THE FINAL SCREEN) -------------------- */}
+        {/* -------------------- 2. COMPLETED STATE -------------------- */}
         {isCompleted && (
           <div className="space-y-6 pt-1 animate-fadeIn">
-            {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-lg shadow-emerald-500/15 shrink-0">
                   <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                 </div>
                 <div>
-                  <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+                  <h3 id="progress-modal-title" className="text-lg sm:text-xl font-bold text-white tracking-tight">
                     Render Complete
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Your file has been compiled and saved to disk.
+                    Your output has been finalized, validated, and saved to the library.
                   </p>
                 </div>
               </div>
 
-              {/* Automatic download badge */}
               <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold self-start sm:self-auto">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Auto-downloaded</span>
+                <span>100% Ready</span>
               </div>
             </div>
 
-            {/* Inline Responsive HTML5 Video Player */}
+            {/* Video Player or ZIP Badge */}
             {!isZipExport && videoPreviewUrl ? (
               <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-slate-800 shadow-2xl">
                 <video
@@ -362,7 +458,7 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
                     Clips ZIP Package Ready
                   </h4>
                   <p className="text-xs text-slate-400 max-w-sm mt-1">
-                    All individual timeline clips have been synchronized and compressed into a ZIP archive.
+                    All individual timeline clips have been synchronized and archived without re-encode degradation.
                   </p>
                 </div>
               </div>
@@ -372,7 +468,7 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
               </div>
             )}
 
-            {/* Prominent High-Conversion Action Buttons */}
+            {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
               <button
                 type="button"
@@ -389,31 +485,57 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
                 className="w-full sm:w-auto py-3 px-5 rounded-xl font-semibold text-sm text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition-all duration-200 cursor-pointer flex items-center justify-center gap-2"
               >
                 <RotateCcw className="w-4 h-4" />
-                <span>Back / Render New</span>
+                <span>Back to Studio</span>
               </button>
             </div>
           </div>
         )}
 
-        {/* -------------------- 3. ERROR STATE -------------------- */}
-        {isError && (
+        {/* -------------------- 3. TERMINAL ERROR / INTERRUPTED / CANCELLED STATE -------------------- */}
+        {(isError || isCancelled || isInterrupted) && (
           <div className="space-y-5 pt-1 animate-fadeIn">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 flex items-center justify-center">
-                <AlertCircle className="w-5 h-5 text-red-400" />
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                isInterrupted
+                  ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400'
+                  : isCancelled
+                  ? 'bg-slate-800 border border-slate-700 text-slate-400'
+                  : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+              }`}>
+                {isInterrupted ? (
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                ) : isCancelled ? (
+                  <StopCircle className="w-5 h-5 text-slate-400" />
+                ) : (
+                  <AlertCircle className="w-5 h-5 text-rose-400" />
+                )}
               </div>
               <div>
-                <h3 className="text-lg font-bold text-white tracking-tight">
-                  Rendering Stopped or Failed
+                <h3 id="progress-modal-title" className="text-lg font-bold text-white tracking-tight">
+                  {isInterrupted
+                    ? 'Render Interrupted'
+                    : isCancelled
+                    ? 'Render Cancelled'
+                    : 'Rendering Failed'}
                 </h3>
                 <p className="text-xs text-slate-400">
-                  An error occurred during video compilation.
+                  {isInterrupted
+                    ? 'The server restarted while this job was active.'
+                    : isCancelled
+                    ? 'Render was stopped by user request.'
+                    : 'An error occurred during video compilation.'}
                 </p>
               </div>
             </div>
 
-            <div className="rounded-xl bg-red-950/30 border border-red-900/50 p-3.5 text-xs text-red-300 font-mono leading-relaxed break-words">
-              {progress.error || progress.message || 'Unknown error occurred.'}
+            <div className={`rounded-xl p-3.5 text-xs font-mono leading-relaxed break-words border ${
+              isInterrupted
+                ? 'bg-amber-950/30 border-amber-900/50 text-amber-300'
+                : isCancelled
+                ? 'bg-slate-950/60 border-slate-800 text-slate-300'
+                : 'bg-rose-950/30 border-rose-900/50 text-rose-300'
+            }`}>
+              {progress.error || progress.message || 'No additional error diagnostics were reported.'}
             </div>
 
             <button
@@ -422,7 +544,7 @@ export const VideoProgressModal: React.FC<VideoProgressModalProps> = ({
               className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-white transition-colors cursor-pointer flex items-center justify-center gap-2"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Close & Try Again</span>
+              <span>Close Dialog</span>
             </button>
           </div>
         )}

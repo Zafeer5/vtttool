@@ -20,6 +20,8 @@ import {
   Archive,
   Play,
   Zap,
+  RotateCcw,
+  Activity,
 } from 'lucide-react';
 import { QueueRenderItem } from '@/lib/types';
 
@@ -30,6 +32,8 @@ interface RenderQueueSidebarProps {
   onClearCompleted: () => void;
   onDownloadItem: (item: QueueRenderItem) => void;
   onPreviewItem?: (item: QueueRenderItem) => void;
+  onRetryItem?: (id: string) => void;
+  onViewProgressItem?: (item: QueueRenderItem) => void;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
 }
@@ -41,6 +45,8 @@ export const RenderQueueSidebar: React.FC<RenderQueueSidebarProps> = ({
   onClearCompleted,
   onDownloadItem,
   onPreviewItem,
+  onRetryItem,
+  onViewProgressItem,
   isCollapsed: controlledIsCollapsed,
   onToggleCollapse,
 }) => {
@@ -243,6 +249,10 @@ export const RenderQueueSidebar: React.FC<RenderQueueSidebarProps> = ({
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                         Ready
                       </span>
+                    ) : item.status === 'interrupted' ? (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                        Interrupted
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
                         Failed
@@ -270,7 +280,7 @@ export const RenderQueueSidebar: React.FC<RenderQueueSidebarProps> = ({
                             ? 'bg-gradient-to-r from-indigo-500 to-purple-500 shadow-sm'
                             : 'bg-amber-500/30'
                         }`}
-                        style={{ width: isRendering ? `${Math.max(4, item.progress)}%` : '0%' }}
+                        style={{ width: isRendering ? `${Math.max(0, Math.min(100, item.progress))}%` : '0%' }}
                       />
                     </div>
 
@@ -330,12 +340,36 @@ export const RenderQueueSidebar: React.FC<RenderQueueSidebarProps> = ({
                     )}
 
                     {(isRendering || isQueued) && (
+                      <div className="flex items-center gap-1">
+                        {onViewProgressItem && (
+                          <button
+                            type="button"
+                            onClick={() => onViewProgressItem(item)}
+                            className="px-2 py-1 rounded-md bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-700/50 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
+                          >
+                            <Activity className="w-3 h-3" />
+                            <span>Progress</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onCancelItem(item.id)}
+                          className="px-2 py-1 rounded-md bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <XCircle className="w-3 h-3" />
+                          <span>Cancel</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {(isFailed || isCancelled || item.status === 'interrupted') && onRetryItem && (
                       <button
-                        onClick={() => onCancelItem(item.id)}
-                        className="px-2 py-1 rounded-md bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
+                        type="button"
+                        onClick={() => onRetryItem(item.id)}
+                        className="px-2.5 py-1 rounded-md bg-amber-950/50 hover:bg-amber-900/60 text-amber-300 border border-amber-700/50 text-[10px] font-semibold flex items-center gap-1 transition cursor-pointer"
                       >
-                        <XCircle className="w-3 h-3" />
-                        <span>Cancel</span>
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Retry</span>
                       </button>
                     )}
                   </div>

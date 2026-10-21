@@ -1334,11 +1334,61 @@ def render_video_native(
             )
             proc.stdin.close()
             err_out = proc.stderr.read() if proc.stderr else b""
+            if proc.stderr:
+                proc.stderr.close()
             proc.wait()
             if proc.returncode != 0:
-                raise RuntimeError(
-                    f"FFmpeg subpixel zoom chunk {segment_index + 1} failed: {err_out.decode('utf-8', errors='ignore')}"
-                )
+                if enc_name != "libx264":
+                    sys.stderr.write(
+                        f"Warning: Hardware encoder '{enc_name}' failed on chunk {segment_index + 1}. "
+                        "Retrying chunk with CPU libx264 fallback...\n"
+                    )
+                    cpu_cmd = [
+                        ffmpeg_exe, "-y",
+                        "-threads", str(threads_per_worker),
+                        "-f", "rawvideo",
+                        "-pix_fmt", pix_format,
+                        "-s", f"{target_width}x{target_height}",
+                        "-r", str(fps),
+                        "-i", "pipe:0",
+                        "-frames:v", str(frame_count),
+                        "-t", f"{duration:.6f}",
+                        "-r", str(fps),
+                        "-c:v", "libx264",
+                        "-preset", "ultrafast",
+                        "-tune", "stillimage",
+                        "-crf", "22",
+                        "-pix_fmt", "yuv420p",
+                        "-movflags", "+faststart",
+                        chunk_path,
+                    ]
+                    cpu_proc = subprocess.Popen(
+                        cpu_cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+                    )
+                    stream_frames_decoupled(
+                        lambda f: render_zoomed_frame(
+                            img_cv, slide_img, f, frame_count, direction, zoom_pct_val,
+                            target_width, target_height, logo_cv, logo_im, logo_pos_coords
+                        ),
+                        frame_count,
+                        cpu_proc.stdin,
+                        max_workers=1,
+                        queue_size=24,
+                    )
+                    cpu_proc.stdin.close()
+                    cpu_err = cpu_proc.stderr.read() if cpu_proc.stderr else b""
+                    if cpu_proc.stderr:
+                        cpu_proc.stderr.close()
+                    cpu_proc.wait()
+                    if cpu_proc.returncode != 0:
+                        raise RuntimeError(
+                            f"FFmpeg CPU fallback zoom chunk {segment_index + 1} failed: {cpu_err.decode('utf-8', errors='ignore')}"
+                        )
+                    return chunk_path
+                else:
+                    raise RuntimeError(
+                        f"FFmpeg subpixel zoom chunk {segment_index + 1} failed: {err_out.decode('utf-8', errors='ignore')}"
+                    )
             return chunk_path
 
         motion_desc = "smooth Ken Burns zoom" if zoom_enabled else "high-speed static"
@@ -1713,11 +1763,66 @@ def render_clips_zip_native(
             )
             proc.stdin.close()
             err_out = proc.stderr.read() if proc.stderr else b""
+            if proc.stderr:
+                proc.stderr.close()
             proc.wait()
             if proc.returncode != 0:
-                raise RuntimeError(
-                    f"FFmpeg subpixel zoom clip {idx + 1} failed: {err_out.decode('utf-8', errors='ignore')}"
-                )
+                if enc_name != "libx264":
+                    sys.stderr.write(
+                        f"Warning: Hardware encoder '{enc_name}' failed on clip {idx + 1}. "
+                        "Retrying clip with CPU libx264 fallback...\n"
+                    )
+                    cpu_cmd = [
+                        ffmpeg_exe, "-y",
+                        "-threads", str(threads_per_worker),
+                        "-f", "rawvideo",
+                        "-pix_fmt", pix_format,
+                        "-s", f"{target_width}x{target_height}",
+                        "-r", "30",
+                        "-i", "pipe:0",
+                        "-ss", f"{start_time:.3f}",
+                        "-t", f"{clip_duration:.3f}",
+                        "-i", audio_path,
+                        "-frames:v", str(f_count),
+                        "-r", "30",
+                        "-c:v", "libx264",
+                        "-preset", "ultrafast",
+                        "-tune", "stillimage",
+                        "-crf", "22",
+                        "-pix_fmt", "yuv420p",
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        "-ar", "44100",
+                        "-movflags", "+faststart",
+                        clip_out,
+                    ]
+                    cpu_proc = subprocess.Popen(
+                        cpu_cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+                    )
+                    stream_frames_decoupled(
+                        lambda f: render_zoomed_frame(
+                            img_cv, slide_img, f, f_count, direction, effective_zoom_pct,
+                            target_width, target_height, logo_cv, logo_im, logo_pos_coords
+                        ),
+                        f_count,
+                        cpu_proc.stdin,
+                        max_workers=1,
+                        queue_size=24,
+                    )
+                    cpu_proc.stdin.close()
+                    cpu_err = cpu_proc.stderr.read() if cpu_proc.stderr else b""
+                    if cpu_proc.stderr:
+                        cpu_proc.stderr.close()
+                    cpu_proc.wait()
+                    if cpu_proc.returncode != 0:
+                        raise RuntimeError(
+                            f"FFmpeg CPU fallback zoom clip {idx + 1} failed: {cpu_err.decode('utf-8', errors='ignore')}"
+                        )
+                    return clip_out
+                else:
+                    raise RuntimeError(
+                        f"FFmpeg subpixel zoom clip {idx + 1} failed: {err_out.decode('utf-8', errors='ignore')}"
+                    )
             return clip_out
 
         print(f"[*] Rendering {len(normalized_paths)} video chunks in parallel with 4-core worker pool ({max_workers} workers, encoder={enc_name})...", flush=True)

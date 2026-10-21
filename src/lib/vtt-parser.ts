@@ -292,3 +292,98 @@ export function ensureWebVttFormat(content: string): string {
   }
   return `WEBVTT\n\n${withDots}`;
 }
+
+export interface VttValidationIssue {
+  type: 'error' | 'warning';
+  cueId?: string;
+  cueIndex?: number;
+  message: string;
+}
+
+export interface VttValidationResult {
+  isValid: boolean;
+  issues: VttValidationIssue[];
+  totalDuration: number;
+  cueCount: number;
+}
+
+/**
+ * Validates an array of VTT cues for errors (negative durations, malformed timestamps)
+ * and warnings (out-of-order cues, overlaps, speech extending beyond audio track).
+ */
+export function validateVttCues(cues: VttCue[], audioDuration?: number): VttValidationResult {
+  const issues: VttValidationIssue[] = [];
+
+  if (cues.length === 0) {
+    issues.push({
+      type: 'warning',
+      message: 'No subtitle cues were found in the VTT file.',
+    });
+  }
+
+  let prevEndTime = 0;
+  let maxEndTime = 0;
+
+  cues.forEach((cue, index) => {
+    // 1. Negative or zero duration
+    if (cue.endTime <= cue.startTime) {
+      issues.push({
+        type: 'error',
+        cueId: cue.id,
+        cueIndex: index,
+        message: `Cue ${index + 1} (${cue.id}) has invalid duration: start (${cue.startTime.toFixed(2)}s) >= end (${cue.endTime.toFixed(2)}s).`,
+      });
+    }
+
+    // 2. Out-of-order cues
+    if (index > 0 && cue.startTime < cues[index - 1].startTime) {
+      issues.push({
+        type: 'warning',
+        cueId: cue.id,
+        cueIndex: index,
+        message: `Cue ${index + 1} starts earlier (${cue.startTime.toFixed(2)}s) than Cue ${index} (${cues[index - 1].startTime.toFixed(2)}s).`,
+      });
+    }
+
+    // 3. Overlapping cues
+    if (index > 0 && cue.startTime < prevEndTime - 0.05) {
+      issues.push({
+        type: 'warning',
+        cueId: cue.id,
+        cueIndex: index,
+        message: `Cue ${index + 1} overlaps previous cue by ${(prevEndTime - cue.startTime).toFixed(2)}s.`,
+      });
+    }
+
+    // 4. Empty cue text
+    if (!cue.cleanText && !cue.text) {
+      issues.push({
+        type: 'warning',
+        cueId: cue.id,
+        cueIndex: index,
+        message: `Cue ${index + 1} has empty subtitle text.`,
+      });
+    }
+
+    if (cue.endTime > maxEndTime) {
+      maxEndTime = cue.endTime;
+    }
+    prevEndTime = Math.max(prevEndTime, cue.endTime);
+  });
+
+  // 5. Cues outside audio duration
+  if (audioDuration && audioDuration > 0 && maxEndTime > audioDuration + 0.5) {
+    issues.push({
+      type: 'warning',
+      message: `Subtitles extend ${(maxEndTime - audioDuration).toFixed(1)}s beyond audio duration (${audioDuration.toFixed(1)}s).`,
+    });
+  }
+
+  const hasErrors = issues.some((i) => i.type === 'error');
+  return {
+    isValid: !hasErrors,
+    issues,
+    totalDuration: maxEndTime,
+    cueCount: cues.length,
+  };
+}

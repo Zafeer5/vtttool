@@ -32,6 +32,7 @@ import { ParagraphMatchStep } from '@/components/ParagraphMatchStep';
 import { ImageSyncLiveStep } from '@/components/ImageSyncLiveStep';
 import { TimelineEditor } from '@/components/TimelineEditor';
 import { VideoProgressModal } from '@/components/VideoProgressModal';
+import { PreRenderValidationModal } from '@/components/PreRenderValidationModal';
 import { VideoPreviewPlayer } from '@/components/VideoPreviewPlayer';
 import { PythonScriptModal } from '@/components/PythonScriptModal';
 import { RenderedVideosModal } from '@/components/RenderedVideosModal';
@@ -57,7 +58,7 @@ import {
 } from '@/lib/types';
 import { VideoResolution } from '@/lib/image-helper';
 import { parseScript, ScriptSplitMode } from '@/lib/script-parser';
-import { parseVtt } from '@/lib/vtt-parser';
+import { parseVtt, validateVttCues } from '@/lib/vtt-parser';
 import { synchronizeScriptAndVtt } from '@/lib/matcher';
 import { generateSlideshowVideo } from '@/lib/ffmpeg-service';
 import { withClipZoomMetadata } from '@/lib/motion';
@@ -317,11 +318,8 @@ export default function Home() {
         if (raw) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
-            return parsed.map((item: QueueRenderItem) => ({
-              ...item,
-              status: (item.status === 'rendering' || item.status === 'preparing') ? 'cancelled' : item.status,
-              message: (item.status === 'rendering' || item.status === 'preparing') ? 'Session ended' : item.message,
-            }));
+            // Preserve loaded queue items as-is; fetchServerJobs() will reconcile active/interrupted jobs with server
+            return parsed;
           }
         }
       } catch (err) {
@@ -331,6 +329,9 @@ export default function Home() {
     return [];
   });
   const [isQueueOpen, setIsQueueOpen] = useState<boolean>(true);
+  const [isProgressModalOpen, setIsProgressModalOpen] = useState<boolean>(false);
+  const [selectedProgressJobId, setSelectedProgressJobId] = useState<string | null>(null);
+  const [showValidationModal, setShowValidationModal] = useState<boolean>(false);
   const jobAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const queuedJobPayloadsRef = useRef<Map<string, QueuedJobPayload>>(new Map());
   const isProcessingQueueRef = useRef<boolean>(false);
@@ -656,6 +657,9 @@ export default function Home() {
             seenIds.add(sj.id);
             const existing = prevMap.get(sj.id);
             const isRunning = sj.status === 'running';
+            const mappedStatus = isRunning
+              ? 'rendering'
+              : (sj.status as QueueRenderItem['status']);
             merged.push({
               id: existing ? existing.id : sj.id,
               serverJobId: sj.id,
@@ -666,7 +670,7 @@ export default function Home() {
               slideCount: sj.slideCount || existing?.slideCount || 0,
               duration: sj.duration || existing?.duration || 0,
               createdAt: existing?.createdAt || new Date(sj.createdAt).getTime(),
-              status: isRunning ? 'rendering' : sj.status,
+              status: mappedStatus,
               progress: typeof sj.progress === 'number' ? sj.progress : (existing?.progress || 0),
               message: sj.message || existing?.message || '',
               stats: sj.stats || existing?.stats,
@@ -679,7 +683,7 @@ export default function Home() {
             });
           }
 
-          // Keep any local preparing items
+          // Keep any local preparing or unlisted queued items
           for (const p of prev) {
             if (!seenIds.has(p.id) && (!p.serverJobId || !seenIds.has(p.serverJobId))) {
               merged.push(p);
@@ -700,61 +704,159 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [fetchServerJobs]);
 
-  // SSE subscription to stream live progress for any active / queued jobs
+  // Resilient SSE subscription with exponential backoff and automatic status sync
   useEffect(() => {
     const activeJobs = queueItems.filter(
       (q) => (q.status === 'rendering' || q.status === 'queued') && q.serverJobId
     );
     if (activeJobs.length === 0) return;
 
-    const cleanups: (() => void)[] = [];
+    let isMounted = true;
+    const esMap = new Map<string, { es: EventSource; retryTimeout?: NodeJS.Timeout; retryCount: number }>();
+
+    const connectJob = (jobId: string, retryCount = 0) => {
+      if (!isMounted) return;
+      try {
+        const es = new EventSource(`/api/render/${jobId}/events`);
+        esMap.set(jobId, { es, retryCount });
+
+        es.onmessage = (event) => {
+          if (!isMounted) return;
+          try {
+            const job = JSON.parse(event.data);
+            setQueueItems((prev) =>
+              prev.map((q) => {
+                if (q.serverJobId === jobId || q.id === jobId) {
+                  return {
+                    ...q,
+                    status: job.status === 'running' ? 'rendering' : job.status,
+                    progress: typeof job.progress === 'number' ? job.progress : q.progress,
+                    message: job.message || q.message,
+                    stats: job.stats || q.stats,
+                    logs: Array.isArray(job.logs) ? job.logs : q.logs,
+                    error: job.error,
+                    outputUrl: job.renderedVideo?.id ? `/api/renders/${job.renderedVideo.id}` : q.outputUrl,
+                    downloadUrl: job.renderedVideo?.id ? `/api/renders/${job.renderedVideo.id}?download=1` : q.downloadUrl,
+                    outputSize: job.renderedVideo?.fileSize || q.outputSize,
+                    savedDestinationPath: job.savedDestinationPath || q.savedDestinationPath,
+                  };
+                }
+                return q;
+              })
+            );
+
+            if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled' || job.status === 'interrupted') {
+              es.close();
+              esMap.delete(jobId);
+              void fetchLibraryCount();
+            }
+          } catch {}
+        };
+
+        es.onerror = () => {
+          es.close();
+          if (!isMounted) return;
+          const delay = Math.min(8000, 1000 * Math.pow(1.5, retryCount)) + Math.random() * 500;
+          const timeout = setTimeout(() => {
+            void fetchServerJobs();
+            connectJob(jobId, retryCount + 1);
+          }, delay);
+          esMap.set(jobId, { es, retryTimeout: timeout, retryCount: retryCount + 1 });
+        };
+      } catch {}
+    };
 
     for (const item of activeJobs) {
-      const jobId = item.serverJobId!;
-      if (typeof EventSource !== 'undefined') {
-        try {
-          const es = new EventSource(`/api/render/${jobId}/events`);
-          es.onmessage = (event) => {
-            try {
-              const job = JSON.parse(event.data);
-              setQueueItems((prev) =>
-                prev.map((q) => {
-                  if (q.serverJobId === jobId || q.id === jobId) {
-                    return {
-                      ...q,
-                      status: job.status === 'running' ? 'rendering' : job.status,
-                      progress: typeof job.progress === 'number' ? job.progress : q.progress,
-                      message: job.message || q.message,
-                      stats: job.stats || q.stats,
-                      logs: Array.isArray(job.logs) ? job.logs : q.logs,
-                      error: job.error,
-                      outputUrl: job.renderedVideo?.id ? `/api/renders/${job.renderedVideo.id}` : q.outputUrl,
-                      downloadUrl: job.renderedVideo?.id ? `/api/renders/${job.renderedVideo.id}?download=1` : q.downloadUrl,
-                      outputSize: job.renderedVideo?.fileSize || q.outputSize,
-                      savedDestinationPath: job.savedDestinationPath || q.savedDestinationPath,
-                    };
-                  }
-                  return q;
-                })
-              );
-              if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
-                es.close();
-                void fetchLibraryCount();
-              }
-            } catch {}
-          };
-          es.onerror = () => {
-            es.close();
-          };
-          cleanups.push(() => es.close());
-        } catch {}
-      }
+      connectJob(item.serverJobId!);
     }
 
     return () => {
-      cleanups.forEach((c) => c());
+      isMounted = false;
+      esMap.forEach(({ es, retryTimeout }) => {
+        if (retryTimeout) clearTimeout(retryTimeout);
+        try {
+          es.close();
+        } catch {}
+      });
+      esMap.clear();
     };
-  }, [queueItems.map((q) => `${q.id}-${q.status}-${q.serverJobId}`).join(','), fetchLibraryCount]);
+  }, [
+    queueItems
+      .filter((q) => (q.status === 'rendering' || q.status === 'queued') && q.serverJobId)
+      .map((q) => `${q.serverJobId}:${q.status}`)
+      .sort()
+      .join(','),
+    fetchLibraryCount,
+    fetchServerJobs,
+  ]);
+
+  const handleRetryQueueItem = async (id: string) => {
+    const item = queueItems.find((q) => q.id === id || q.serverJobId === id);
+    if (!item) return;
+
+    if (item.serverJobId) {
+      try {
+        const resp = await fetch(`/api/render/${item.serverJobId}`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+          await fetchServerJobs();
+          return;
+        }
+      } catch (err) {
+        console.warn('Server retry failed:', err);
+      }
+    }
+
+    if (queuedJobPayloadsRef.current.has(item.id)) {
+      setQueueItems((prev) =>
+        prev.map((q) =>
+          q.id === item.id
+            ? { ...q, status: 'queued', progress: 0, message: 'Queued (retry)...', error: undefined }
+            : q
+        )
+      );
+      setQueueTrigger((prev) => prev + 1);
+    }
+  };
+
+  const handleExportProject = (projectId: string) => {
+    const target = projects.find((p) => p.id === projectId);
+    if (!target) return;
+    const jsonStr = JSON.stringify(target, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${target.name.replace(/\s+/g, '_')}_project.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportProject = async (file: File) => {
+    try {
+      const text = await file.text();
+      const imported = JSON.parse(text);
+      if (!imported || typeof imported !== 'object') {
+        alert('Invalid project file format.');
+        return;
+      }
+      const newId = `proj_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const importedProject: ProjectItem = {
+        ...imported,
+        id: newId,
+        name: imported.name ? `${imported.name} (Imported)` : 'Imported Project',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        images: Array.isArray(imported.images) ? imported.images : [],
+      };
+      setProjects((prev) => [...prev, importedProject]);
+      handleSwitchProject(newId);
+    } catch (err) {
+      alert('Could not parse imported project file: ' + (err as Error).message);
+    }
+  };
 
   // Compute live synchronization analysis whenever paragraphs, cues, images, or transcripts change
   const syncAnalysis: SyncAnalysis = useMemo(() => {
@@ -1044,7 +1146,6 @@ export default function Home() {
   };
 
   // Step 5: Video Compilation - Enqueues task into the Sequential Queue
-  // Tasks are added to the list and do NOT start until previous renders complete
   const handleGenerateVideo = async () => {
     if (!exportMode) {
       alert('Please select an export mode (Single Video or Clips ZIP Archive) before proceeding.');
@@ -1056,12 +1157,11 @@ export default function Home() {
       return;
     }
 
-    const missingSlideIndex = activeMatches.findIndex((m) => !m.image);
-    if (missingSlideIndex !== -1) {
-      alert(`Slide ${missingSlideIndex + 1} is missing an image. Please attach an image for each slide.`);
-      return;
-    }
+    // Open Pre-Render Validation Modal
+    setShowValidationModal(true);
+  };
 
+  const handleProceedWithRender = () => {
     const queueId = `render_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const isZip = exportMode === 'clips_zip';
     const fileExt = isZip ? '.zip' : '.mp4';
@@ -1081,7 +1181,7 @@ export default function Home() {
     const folderSnapshot = selectedFolder;
     const autoDownloadSnapshot = autoDownloadEnabled;
     const audioFileSnapshot = voiceoverFile;
-    const exportModeSnapshot = exportMode;
+    const exportModeSnapshot: ExportMode = exportMode || 'single';
 
     const payload: QueuedJobPayload = {
       matchesSnapshot,
@@ -1119,6 +1219,8 @@ export default function Home() {
 
     setQueueItems((prev) => [...prev, newItem]);
     setIsQueueOpen(true);
+    setSelectedProgressJobId(queueId);
+    setIsProgressModalOpen(true);
     setQueueTrigger((prev) => prev + 1);
   };
 
@@ -1160,7 +1262,7 @@ export default function Home() {
           ? {
               ...item,
               status: 'preparing',
-              progress: 3,
+              progress: 0,
               message: 'Preparing timeline and media...',
               logs: ['[Init] Starting sequential video render...'],
             }
@@ -1179,14 +1281,15 @@ export default function Home() {
 
     setRenderProgress({
       stage: 'preparing',
-      percentage: 3,
+      percentage: 0,
       message: 'Starting video compilation...',
       logs: ['[Init] Initializing render job...'],
       exportMode: payload.exportModeSnapshot,
+      jobId: queueId,
     });
 
     let receivedApiUrl: string | null = null;
-    let highestProgress = 3;
+    let highestProgress = 0;
 
     try {
       const blob = await generateSlideshowVideo(payload.matchesSnapshot, {
@@ -1196,14 +1299,15 @@ export default function Home() {
           }
           const rawPct = typeof prog.percentage === 'number' ? prog.percentage : 0;
           const isCompletedStage = prog.stage === 'completed';
-          const clampedPct = isCompletedStage
+          const calculatedPct = isCompletedStage
             ? 100
-            : Math.min(99, Math.max(highestProgress, Math.round(rawPct)));
-          highestProgress = clampedPct;
+            : Math.max(highestProgress, Math.round(rawPct));
+          highestProgress = calculatedPct;
 
           const monotonicProg: RenderProgress = {
             ...prog,
-            percentage: clampedPct,
+            percentage: calculatedPct,
+            jobId: prog.jobId || queueId,
           };
           setRenderProgress(monotonicProg);
 
@@ -1218,7 +1322,7 @@ export default function Home() {
                     : prog.stage === 'queued'
                     ? 'queued'
                     : 'rendering',
-                  progress: clampedPct,
+                  progress: calculatedPct,
                   message: prog.message || item.message,
                   stats: prog.stats || item.stats,
                   logs: prog.logs ? [...prog.logs.slice(-30)] : item.logs,
@@ -1458,9 +1562,6 @@ export default function Home() {
     });
   };
 
-  const handleRetryQueueItem = (_item: QueueRenderItem) => {
-    handleGenerateVideo();
-  };
 
   const handleCancelRender = () => {
     if (renderAbortControllerRef.current) {
@@ -1478,6 +1579,45 @@ export default function Home() {
 
 
 
+  const activeModalItem = useMemo(() => {
+    return (
+      queueItems.find(
+        (q) => selectedProgressJobId && (q.id === selectedProgressJobId || q.serverJobId === selectedProgressJobId)
+      ) ||
+      queueItems.find((q) => q.status === 'rendering' || q.status === 'preparing') ||
+      queueItems[0] ||
+      null
+    );
+  }, [queueItems, selectedProgressJobId]);
+
+  const modalProgress: RenderProgress = useMemo(() => {
+    if (activeModalItem) {
+      const isFinished = activeModalItem.status === 'completed';
+      const isErr = activeModalItem.status === 'failed';
+      const isCancel = activeModalItem.status === 'cancelled';
+      const isInter = activeModalItem.status === 'interrupted';
+      let stage: RenderProgress['stage'] = 'encoding';
+      if (isFinished) stage = 'completed';
+      else if (isErr || isCancel || isInter) stage = 'error';
+      else if (activeModalItem.status === 'queued') stage = 'queued';
+      else if (activeModalItem.status === 'preparing') stage = 'preparing';
+
+      return {
+        stage,
+        percentage: activeModalItem.progress,
+        message: activeModalItem.message || (isFinished ? 'Render completed' : 'Processing...'),
+        logs: activeModalItem.logs || [],
+        stats: activeModalItem.stats,
+        outputBlob: activeModalItem.outputBlob || undefined,
+        outputUrl: activeModalItem.outputUrl || undefined,
+        error: activeModalItem.error,
+        exportMode: activeModalItem.exportMode || 'single',
+        jobId: activeModalItem.serverJobId || activeModalItem.id,
+      };
+    }
+    return renderProgress;
+  }, [activeModalItem, renderProgress]);
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans select-none">
       {/* Left Vertical Bar: Projects Sidebar */}
@@ -1489,6 +1629,8 @@ export default function Home() {
         onDeleteProject={handleDeleteProject}
         onRenameProject={handleRenameProject}
         onDuplicateProject={handleDuplicateProject}
+        onExportProject={handleExportProject}
+        onImportProject={handleImportProject}
       />
 
       {/* Center Main Workspace */}
@@ -1572,6 +1714,44 @@ export default function Home() {
         onClearCompleted={handleClearCompletedQueue}
         onDownloadItem={handleDownloadQueueItem}
         onPreviewItem={(item) => setPreviewModalItem(item)}
+        onRetryItem={handleRetryQueueItem}
+        onViewProgressItem={(item) => {
+          setSelectedProgressJobId(item.serverJobId || item.id);
+          setIsProgressModalOpen(true);
+        }}
+      />
+
+      {/* Pre-Render Validation Modal */}
+      <PreRenderValidationModal
+        isOpen={showValidationModal}
+        onClose={() => setShowValidationModal(false)}
+        onConfirm={() => {
+          setShowValidationModal(false);
+          handleProceedWithRender();
+        }}
+        matches={activeMatches}
+        exportMode={exportMode || 'single'}
+        resolution={selectedResolution}
+        totalDuration={activeTotalDuration}
+        outputFileName={outputFileName}
+        hasAudio={!!voiceoverFile}
+        audioDuration={voiceoverDuration}
+        motionSettings={activeMotionSettings}
+        vttValidation={validateVttCues(cues, voiceoverDuration)}
+      />
+
+      {/* Video Progress & Real-time Telemetry Modal */}
+      <VideoProgressModal
+        isOpen={isProgressModalOpen}
+        onClose={() => setIsProgressModalOpen(false)}
+        progress={modalProgress}
+        jobId={activeModalItem?.serverJobId || activeModalItem?.id || selectedProgressJobId || undefined}
+        outputFileName={activeModalItem?.outputFileName || outputFileName}
+        onCancel={
+          selectedProgressJobId
+            ? () => handleCancelQueueItem(selectedProgressJobId)
+            : undefined
+        }
       />
 
       {/* Modal for Previewing Queue Video */}

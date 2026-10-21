@@ -15,6 +15,8 @@ import {
   Layers,
   Clock,
   Image as ImageIcon,
+  Download,
+  Upload,
 } from 'lucide-react';
 import { ProjectItem } from '@/lib/types';
 
@@ -26,6 +28,8 @@ interface ProjectsSidebarProps {
   onDeleteProject: (projectId: string) => void;
   onRenameProject: (projectId: string, newName: string) => void;
   onDuplicateProject?: (projectId: string) => void;
+  onExportProject?: (projectId: string) => void;
+  onImportProject?: (file: File) => void;
 }
 
 export const ProjectsSidebar: React.FC<ProjectsSidebarProps> = ({
@@ -36,10 +40,13 @@ export const ProjectsSidebar: React.FC<ProjectsSidebarProps> = ({
   onDeleteProject,
   onRenameProject,
   onDuplicateProject,
+  onExportProject,
+  onImportProject,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState<string>('');
+  const importInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const handleStartRename = (project: ProjectItem, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -154,8 +161,8 @@ export const ProjectsSidebar: React.FC<ProjectsSidebarProps> = ({
         </button>
       </div>
 
-      {/* CTA: Sleek full-width button for + Create Project */}
-      <div className="p-3 border-b border-slate-800 shrink-0">
+      {/* CTA: + Create Project and Import Project */}
+      <div className="p-3 border-b border-slate-800 shrink-0 space-y-1.5">
         <button
           onClick={onCreateProject}
           className="w-full py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-sm transition-all flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer"
@@ -163,6 +170,30 @@ export const ProjectsSidebar: React.FC<ProjectsSidebarProps> = ({
           <FolderPlus className="w-3.5 h-3.5" />
           <span>+ Create Project</span>
         </button>
+        {onImportProject && (
+          <>
+            <input
+              type="file"
+              ref={importInputRef}
+              accept=".json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  onImportProject(file);
+                  e.target.value = '';
+                }
+              }}
+            />
+            <button
+              onClick={() => importInputRef.current?.click()}
+              className="w-full py-1.5 px-3 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white font-medium text-[11px] border border-slate-700/60 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Upload className="w-3 h-3 text-slate-400" />
+              <span>Import Project (.json)</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Projects List */}
@@ -263,6 +294,18 @@ export const ProjectsSidebar: React.FC<ProjectsSidebarProps> = ({
                           className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition"
                         >
                           <Copy className="w-3 h-3" />
+                        </button>
+                      )}
+                      {onExportProject && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onExportProject(proj.id);
+                          }}
+                          title="Export Project (JSON)"
+                          className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                        >
+                          <Download className="w-3 h-3" />
                         </button>
                       )}
                       <button

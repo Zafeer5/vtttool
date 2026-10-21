@@ -715,12 +715,12 @@ export async function renderWithNativeServer(
 
     logs.push(`[Native Engine] Background render job ${jobId} accepted.`);
     let job = accepted.job;
-    let highestProgress = 5;
+    let highestProgress = typeof job.progress === 'number' ? job.progress : 0;
 
     onProgress?.({
-      stage: job.status === 'queued' ? 'queued' : 'encoding',
-      percentage: 5,
-      message: job.message || 'Render accepted; starting the server-side encoder...',
+      stage: job.status === 'queued' ? 'queued' : 'preparing',
+      percentage: highestProgress,
+      message: job.message || 'Render accepted; starting server-side encoder...',
       logs: [...logs, ...(Array.isArray(job.logs) ? job.logs : [])],
       stats: job.stats,
       jobId,
@@ -728,7 +728,7 @@ export async function renderWithNativeServer(
 
     let lastProgressUpdateTime = 0;
 
-    // Phase 1 Fix: Use Server-Sent Events (SSE) to receive real-time updates from backend without UI polling bottleneck
+    // Use Server-Sent Events (SSE) to receive real-time updates from backend without UI polling bottleneck
     job = await new Promise<any>((resolve, reject) => {
       let resolved = false;
       let eventSource: EventSource | null = null;
@@ -748,22 +748,30 @@ export async function renderWithNativeServer(
       const handleJobUpdate = (currentJob: any) => {
         if (resolved) return;
         const rawProgress = typeof currentJob.progress === 'number' ? currentJob.progress : 0;
-        // Map server progress (0-100%) cleanly into 5% to 95% monotonically
-        const mappedProgress = Math.min(95, Math.max(highestProgress, Math.round(5 + (rawProgress * 0.90))));
+        // Keep progress monotonic within this job: strictly moving forward, without artificial base offset
+        const mappedProgress = Math.min(99, Math.max(highestProgress, Math.round(rawProgress)));
         highestProgress = mappedProgress;
         const isTerminal =
           currentJob.status === 'completed' ||
           currentJob.status === 'failed' ||
-          currentJob.status === 'cancelled';
+          currentJob.status === 'cancelled' ||
+          currentJob.status === 'interrupted';
 
         const now = performance.now();
-        if (now - lastProgressUpdateTime > 100 || isTerminal || mappedProgress >= 93) {
+        if (now - lastProgressUpdateTime > 100 || isTerminal || mappedProgress >= 95) {
           lastProgressUpdateTime = now;
           const jobLogs = Array.isArray(currentJob.logs) ? currentJob.logs : [];
-          onProgress?.({
-            stage: currentJob.status === 'queued'
+          const currentStage =
+            currentJob.status === 'queued'
               ? 'queued'
-              : (mappedProgress >= 93 ? 'finalizing' : 'encoding'),
+              : mappedProgress >= 96
+              ? 'finalizing'
+              : currentJob.status === 'running'
+              ? 'encoding'
+              : 'preparing';
+
+          onProgress?.({
+            stage: currentStage,
             percentage: mappedProgress,
             message: currentJob.message || 'Compiling synchronized video...',
             logs: [...logs, ...jobLogs.slice(-40)],

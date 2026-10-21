@@ -7,10 +7,12 @@ import { RenderedVideoItem, RenderStats } from './types';
 
 export type RenderJobStatus =
   | 'queued'
+  | 'preparing'
   | 'running'
   | 'completed'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'interrupted';
 
 export interface RenderJob {
   id: string;
@@ -75,6 +77,20 @@ export function subscribeToJob(
   };
 }
 
+function terminateProcessTree(child: ChildProcess): void {
+  if (!child || !child.pid) return;
+  if (process.platform === 'win32') {
+    try {
+      const { execSync } = require('child_process');
+      execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: 'ignore' });
+      return;
+    } catch {}
+  }
+  try {
+    child.kill('SIGKILL');
+  } catch {}
+}
+
 const activeChildren =
   runtime.__vttRenderJobChildren ?? (runtime.__vttRenderJobChildren = new Map());
 const activeRecords =
@@ -122,8 +138,11 @@ function updateJob(job: RenderJob, update: Partial<RenderJob>, immediatePersist 
   Object.assign(job, update, { updatedAt: new Date().toISOString() });
   activeRecords.set(job.id, job);
 
-  // Throttled SSE event emission (Phase 1 Fix: Throttle Progress Updates at 1% steps)
-  const isFinal = job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+  const isFinal =
+    job.status === 'completed' ||
+    job.status === 'failed' ||
+    job.status === 'cancelled' ||
+    job.status === 'interrupted';
   const lastEmitted = job._lastEmittedProgress ?? -1;
   const progressStepCleared = Math.abs(job.progress - lastEmitted) >= 1;
 
@@ -277,7 +296,7 @@ export async function createRenderJob(
   const job: RenderJob = {
     id: randomUUID(),
     status: 'queued',
-    progress: 2,
+    progress: 0,
     message: queuePos > 0
       ? `Render queued (Position #${queuePos} in line). Waiting for current render...`
       : 'Render accepted. Starting the background encoder...',
@@ -327,8 +346,8 @@ async function runRenderJob(
     if (isJobCancelled(job)) return;
     updateJob(job, {
       status: 'running',
-      progress: 5,
-      message: 'Rendering in the background on the server...',
+      progress: job.progress || 0,
+      message: 'Compiling video in the background on the server...',
     });
 
     const { spawn } = await import('child_process');
@@ -417,8 +436,7 @@ async function runRenderJob(
         error instanceof Error ? error.message : 'Background render failed.';
       updateJob(job, {
         status: 'failed',
-        progress: 0,
-        message: 'Background render failed.',
+        message: `Background render failed: ${message}`,
         error: message,
         logs: [...job.logs.slice(-39), `[Error] ${message}`],
       });
@@ -452,10 +470,9 @@ export async function getRenderJob(id: string): Promise<RenderJob | null> {
   }
   if (job.status === 'queued' || job.status === 'running') {
     Object.assign(job, {
-      status: 'failed',
-      progress: 0,
-      message: 'Render process stopped before it could finish.',
-      error: 'The application server restarted while this render was running.',
+      status: 'interrupted',
+      message: 'Render process was interrupted when the server restarted.',
+      error: 'The application server restarted while this render was running. You can safely retry this job.',
       updatedAt: new Date().toISOString(),
     });
     await persistJob(job);
@@ -471,10 +488,11 @@ export async function cancelRenderJob(id: string): Promise<boolean> {
   const child = activeChildren.get(id);
   updateJob(job, {
     status: 'cancelled',
-    progress: 0,
-    message: 'Render cancelled.',
+    message: 'Render cancelled by user.',
   });
-  child?.kill();
+  if (child) {
+    terminateProcessTree(child);
+  }
   if (queuedJob) {
     await fs.promises.rm(queuedJob.execution.tempDirPath, {
       recursive: true,
@@ -498,7 +516,7 @@ export async function deleteRenderJob(id: string): Promise<boolean> {
   const child = activeChildren.get(id);
   if (child) {
     try {
-      child.kill();
+      terminateProcessTree(child);
     } catch {}
     activeChildren.delete(id);
   }
@@ -572,8 +590,9 @@ export async function listRenderJobs(): Promise<RenderJob[]> {
               jobsMap.set(id, job);
             } else {
               if (job.status === 'queued' || job.status === 'running') {
-                job.status = 'failed';
-                job.error = 'Render server restarted while this job was active.';
+                job.status = 'interrupted';
+                job.message = 'Render was interrupted when the server restarted.';
+                job.error = 'The server restarted while this render was running. You can safely retry it.';
               }
               jobsMap.set(id, job);
             }
@@ -587,7 +606,7 @@ export async function listRenderJobs(): Promise<RenderJob[]> {
 
   const list = Array.from(jobsMap.values());
   list.sort((a, b) => {
-    const order: Record<string, number> = { running: 0, queued: 1, completed: 2, failed: 3, cancelled: 4 };
+    const order: Record<string, number> = { running: 0, queued: 1, completed: 2, interrupted: 3, failed: 4, cancelled: 5 };
     const orderA = order[a.status] ?? 99;
     const orderB = order[b.status] ?? 99;
     if (orderA !== orderB) return orderA - orderB;
@@ -596,3 +615,20 @@ export async function listRenderJobs(): Promise<RenderJob[]> {
 
   return list;
 }
+
+export async function retryRenderJob(id: string): Promise<RenderJob | null> {
+  const job = activeRecords.get(id) ?? await getRenderJob(id);
+  if (!job) return null;
+  if (job.status !== 'failed' && job.status !== 'interrupted' && job.status !== 'cancelled') {
+    return job;
+  }
+  updateJob(job, {
+    status: 'queued',
+    progress: 0,
+    error: undefined,
+    message: 'Render re-queued for retry...',
+    logs: [...job.logs.slice(-30), '[Retry] Job marked for retry.'],
+  }, true);
+  return job;
+}
+

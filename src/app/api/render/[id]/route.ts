@@ -28,6 +28,28 @@ export async function GET(
   }
 }
 
+export async function POST(
+  _request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await context.params;
+    const { retryRenderJob } = await import('@/lib/render-jobs');
+    const job = await retryRenderJob(id);
+    if (!job) {
+      return NextResponse.json(
+        { success: false, error: 'Render job not found for retry.' },
+        { status: 404 }
+      );
+    }
+    return NextResponse.json({ success: true, job });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Could not retry render job.';
+    return NextResponse.json({ success: false, error: message }, { status: 400 });
+  }
+}
+
 export async function DELETE(
   _request: NextRequest,
   context: { params: Promise<{ id: string }> }
