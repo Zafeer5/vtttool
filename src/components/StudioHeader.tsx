@@ -17,6 +17,7 @@ import {
   RotateCcw,
   ShieldCheck,
   Video,
+  Archive,
 } from 'lucide-react';
 import { ProjectItem, SyncMode, ExportMode } from '@/lib/types';
 import { VideoResolution } from '@/lib/image-helper';
@@ -36,6 +37,8 @@ interface StudioHeaderProps {
   onOpenValidation: () => void;
   onCompileAndRender: () => void;
   isRendering: boolean;
+  exportMode: ExportMode;
+  onExportModeChange: (mode: ExportMode) => void;
   queueCount: number;
   activeRenderCount: number;
   onToggleQueue: () => void;
@@ -60,6 +63,8 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
   onOpenValidation,
   onCompileAndRender,
   isRendering,
+  exportMode,
+  onExportModeChange,
   queueCount,
   activeRenderCount,
   onToggleQueue,
@@ -299,6 +304,36 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
           <span className="hidden md:inline">Validate</span>
         </button>
 
+        {/* Export Mode Toggle: Single MP4 vs Clips ZIP */}
+        <div className="flex items-center bg-[#18222D] rounded-lg border border-[#2B3947] p-0.5" title="Select export output format">
+          <button
+            type="button"
+            onClick={() => onExportModeChange('single')}
+            className={`px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer ${
+              exportMode === 'single'
+                ? 'bg-[#2DD4BF] text-[#0B0F14] font-bold shadow-sm'
+                : 'text-[#A4B1C0] hover:text-[#F1F5F9] hover:bg-[#202C38]'
+            }`}
+            title="Export as a single continuous MP4 video"
+          >
+            <Video className="w-3 h-3" />
+            <span>Single</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onExportModeChange('clips_zip')}
+            className={`px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer ${
+              exportMode === 'clips_zip'
+                ? 'bg-[#2DD4BF] text-[#0B0F14] font-bold shadow-sm'
+                : 'text-[#A4B1C0] hover:text-[#F1F5F9] hover:bg-[#202C38]'
+            }`}
+            title="Export as individual slide video clips in a ZIP package"
+          >
+            <Archive className="w-3 h-3" />
+            <span>Clips</span>
+          </button>
+        </div>
+
         {/* Master Compile & Render Action */}
         <button
           type="button"
@@ -307,7 +342,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
           className="px-3.5 py-1.5 rounded-lg bg-[#2DD4BF] hover:bg-[#5EEAD4] active:bg-[#14B8A6] text-[#0B0F14] text-xs font-bold flex items-center gap-1.5 shadow-[0_2px_12px_rgba(45,212,191,0.25)] transition cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
         >
           <Play className="w-3.5 h-3.5 fill-[#0B0F14]" />
-          <span>Render Video</span>
+          <span>{exportMode === 'clips_zip' ? 'Render Clips ZIP' : 'Render Video'}</span>
         </button>
       </div>
     </header>

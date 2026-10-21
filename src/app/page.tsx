@@ -1717,6 +1717,8 @@ export default function Home() {
           onOpenValidation={() => setShowValidationModal(true)}
           onCompileAndRender={handleGenerateVideo}
           isRendering={isRendering}
+          exportMode={exportMode || 'single'}
+          onExportModeChange={(m) => setExportMode(m)}
           queueCount={queueItems.length}
           activeRenderCount={queueItems.filter((i) => i.status === 'rendering' || i.status === 'preparing').length}
           onToggleQueue={() => setIsQueueOpen((prev) => !prev)}
