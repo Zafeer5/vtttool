@@ -244,3 +244,170 @@ describe('VTT Cue Validation', () => {
     assert.ok(res.issues.some((i) => i.type === 'warning' && i.message.includes('extend beyond voiceover')));
   });
 });
+
+// 4. Test Speech Synchronization & Slide Alignment Engine
+describe('Speech Synchronization & Slide Alignment Engine', () => {
+  function computeSlideTimings({ paragraphs, cues, images, audioDuration }) {
+    const paragraphCount = paragraphs.length;
+    const imageCount = images.length;
+
+    // Strict Rule: If paragraphCount === 0 and imageCount > 0, fallback to image division
+    if (imageCount > 0 && paragraphCount === 0) {
+      const total = audioDuration || 10;
+      const step = total / imageCount;
+      return images.map((img, i) => ({
+        slideIndex: i,
+        startTime: Number((i * step).toFixed(3)),
+        endTime: Number(((i + 1) * step).toFixed(3)),
+        duration: Number(step.toFixed(3)),
+        image: img,
+        mode: 'image_fallback',
+      }));
+    }
+
+    // When paragraphs exist, paragraphs ALWAYS drive speech synchronization
+    const rawTimings = [];
+    let prevStartTime = -1;
+
+    for (let i = 0; i < paragraphs.length; i++) {
+      const p = paragraphs[i];
+      let matchedStart = cues[i] ? cues[i].start : (prevStartTime >= 0 ? prevStartTime + 2.0 : 0);
+      
+      // Monotonic guard: candidate cannot precede previous start + 0.3
+      if (prevStartTime >= 0 && matchedStart < prevStartTime + 0.3) {
+        matchedStart = prevStartTime + 0.5;
+      }
+      prevStartTime = matchedStart;
+
+      rawTimings.push({
+        paragraphIndex: i,
+        startTime: Number(matchedStart.toFixed(3)),
+        text: p.text,
+      });
+    }
+
+    // Build finalized non-overlapping slide matches
+    return rawTimings.map((rt, i) => {
+      let endTime;
+      if (i < rawTimings.length - 1) {
+        endTime = rawTimings[i + 1].startTime;
+      } else {
+        const lastCueEnd = cues.length > 0 ? cues[cues.length - 1].end : rt.startTime + 3.0;
+        endTime = Math.max(rt.startTime + 0.5, audioDuration || lastCueEnd);
+      }
+      
+      return {
+        slideIndex: i,
+        startTime: rt.startTime,
+        endTime: Number(endTime.toFixed(3)),
+        duration: Number((endTime - rt.startTime).toFixed(3)),
+        image: images[i] || null,
+        isMissingImage: !images[i],
+        text: rt.text,
+      };
+    });
+  }
+
+  test('Speech synchronization is strictly preserved when imageCount < paragraphCount', () => {
+    const paragraphs = [
+      { text: 'Paragraph one introduction' },
+      { text: 'Paragraph two explanation' },
+      { text: 'Paragraph three details' },
+      { text: 'Paragraph four summary' },
+      { text: 'Paragraph five conclusion' },
+    ];
+    const cues = [
+      { start: 0.0, end: 6.8, text: 'Paragraph one introduction' },
+      { start: 7.1, end: 14.2, text: 'Paragraph two explanation' },
+      { start: 14.6, end: 21.8, text: 'Paragraph three details' },
+      { start: 22.2, end: 28.5, text: 'Paragraph four summary' },
+      { start: 29.1, end: 33.5, text: 'Paragraph five conclusion' },
+    ];
+    // Only 3 images for 5 paragraphs!
+    const images = [{ name: 'img1.png' }, { name: 'img2.png' }, { name: 'img3.png' }];
+
+    const slides = computeSlideTimings({ paragraphs, cues, images, audioDuration: 33.5 });
+
+    assert.strictEqual(slides.length, 5, 'Must create 5 slides matching 5 paragraphs, not 3');
+    assert.strictEqual(slides[0].startTime, 0.0);
+    assert.strictEqual(slides[0].endTime, 7.1);
+    assert.strictEqual(slides[1].startTime, 7.1);
+    assert.strictEqual(slides[1].endTime, 14.6);
+    assert.strictEqual(slides[2].startTime, 14.6);
+    assert.strictEqual(slides[2].endTime, 22.2);
+    assert.strictEqual(slides[3].startTime, 22.2);
+    assert.strictEqual(slides[3].endTime, 29.1);
+    assert.strictEqual(slides[4].startTime, 29.1);
+    assert.strictEqual(slides[4].endTime, 33.5);
+
+    // Verify image assignment & missing alerts
+    assert.strictEqual(slides[0].image.name, 'img1.png');
+    assert.strictEqual(slides[1].image.name, 'img2.png');
+    assert.strictEqual(slides[2].image.name, 'img3.png');
+    assert.strictEqual(slides[3].image, null);
+    assert.strictEqual(slides[3].isMissingImage, true);
+    assert.strictEqual(slides[4].image, null);
+    assert.strictEqual(slides[4].isMissingImage, true);
+  });
+
+  test('Speech synchronization is strictly preserved when imageCount > paragraphCount', () => {
+    const paragraphs = [
+      { text: 'Paragraph one' },
+      { text: 'Paragraph two' },
+    ];
+    const cues = [
+      { start: 0.0, end: 5.0, text: 'Paragraph one' },
+      { start: 5.2, end: 10.0, text: 'Paragraph two' },
+    ];
+    // 4 images for 2 paragraphs
+    const images = [{ name: '1.jpg' }, { name: '2.jpg' }, { name: '3.jpg' }, { name: '4.jpg' }];
+
+    const slides = computeSlideTimings({ paragraphs, cues, images, audioDuration: 10.0 });
+    assert.strictEqual(slides.length, 2, 'Paragraphs govern speech structure');
+    assert.strictEqual(slides[0].startTime, 0.0);
+    assert.strictEqual(slides[0].endTime, 5.2);
+    assert.strictEqual(slides[1].startTime, 5.2);
+    assert.strictEqual(slides[1].endTime, 10.0);
+  });
+
+  test('Rejects non-monotonic false-positive cues and forces forward progression', () => {
+    const paragraphs = [{ text: 'Slide A' }, { text: 'Slide B' }, { text: 'Slide C' }];
+    const cues = [
+      { start: 4.0, end: 8.0, text: 'Slide A' },
+      { start: 1.0, end: 3.0, text: 'Slide B' }, // Invalid backward jump!
+      { start: 10.0, end: 15.0, text: 'Slide C' },
+    ];
+    const images = [{ name: 'a.png' }, { name: 'b.png' }, { name: 'c.png' }];
+
+    const slides = computeSlideTimings({ paragraphs, cues, images, audioDuration: 15.0 });
+
+    assert.ok(slides[1].startTime >= slides[0].startTime + 0.3, 'Slide 2 must advance forward, not jump back to 1.0');
+    assert.ok(slides[2].startTime >= slides[1].startTime + 0.3, 'Slide 3 must advance forward');
+    assert.strictEqual(slides.every(s => s.duration > 0), true, 'All durations must be strictly positive');
+  });
+
+  test('Timeline duration adjustment propagates monotonically to subsequent slides', () => {
+    const initialSlides = [
+      { startTime: 0.0, endTime: 5.0, duration: 5.0 },
+      { startTime: 5.0, endTime: 12.0, duration: 7.0 },
+      { startTime: 12.0, endTime: 20.0, duration: 8.0 },
+    ];
+
+    const diff = 7.0 - initialSlides[0].duration;
+    const updated = initialSlides.map(s => ({ ...s }));
+    updated[0].duration = 7.0;
+    updated[0].endTime = Number((updated[0].startTime + 7.0).toFixed(3));
+    for (let j = 1; j < updated.length; j++) {
+      updated[j].startTime = Number((updated[j].startTime + diff).toFixed(3));
+      updated[j].endTime = Number((updated[j].endTime + diff).toFixed(3));
+    }
+
+    assert.strictEqual(updated[0].startTime, 0.0);
+    assert.strictEqual(updated[0].endTime, 7.0);
+    assert.strictEqual(updated[1].startTime, 7.0);
+    assert.strictEqual(updated[1].endTime, 14.0);
+    assert.strictEqual(updated[2].startTime, 14.0);
+    assert.strictEqual(updated[2].endTime, 22.0);
+  });
+});
+

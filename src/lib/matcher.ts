@@ -556,9 +556,9 @@ export function synchronizeScriptAndVtt(
     audioDuration && audioDuration > 0 ? audioDuration : 0
   );
 
-  // If images exist and either no script paragraphs exist OR image count != paragraph count,
+  // If images exist but NO script paragraphs exist,
   // directly sync the images across the entire voiceover duration, snapping cut points to speech pauses/silence gaps.
-  if (imageCount > 0 && (paragraphCount === 0 || imageCount !== paragraphCount)) {
+  if (imageCount > 0 && paragraphCount === 0) {
     const totalDuration = effectiveAudioEnd > 0 ? effectiveAudioEnd : imageCount * 4.0;
 
     // Find natural speech silence gaps between cues (at least 120ms gap)
@@ -795,11 +795,16 @@ export function synchronizeScriptAndVtt(
       const bestScore = confidence === 'exact' ? 98 : confidence === 'high' ? 88 : confidence === 'fuzzy' ? 72 : 45;
 
       let startTime: number | null = null;
+      const prevStartTime = rawTimestamps[i - 1]?.start ?? 0;
       if (matchedCue && confidence !== 'fallback') {
-        startTime = wordSnappedStart !== undefined ? wordSnappedStart : matchedCue.startTime;
-        currentCueIndex = Math.min(cueIndex + 1, cues.length - 1);
-        if (matchedWordIndex !== undefined) {
-          currentWordIndex = matchedWordIndex;
+        const candidateTime = wordSnappedStart !== undefined ? wordSnappedStart : matchedCue.startTime;
+        // Strictly advancing: a subsequent paragraph must begin after the previous one starts
+        if (candidateTime >= prevStartTime + 0.3) {
+          startTime = candidateTime;
+          currentCueIndex = Math.min(cueIndex + 1, cues.length - 1);
+          if (matchedWordIndex !== undefined) {
+            currentWordIndex = matchedWordIndex;
+          }
         }
       }
 
@@ -902,7 +907,7 @@ export function synchronizeScriptAndVtt(
     let end = 0;
     if (i < effectiveParagraphs.length - 1) {
       // Slide i ends exactly when slide i + 1 starts (held until next paragraph's opening 3-4 words match!)
-      end = rawTimestamps[i + 1].start;
+      end = Math.max(start + 0.5, rawTimestamps[i + 1].start);
     } else {
       // Final slide: extends until the end of voiceover audio / last VTT cue
       const finalWords = (paragraph.words && paragraph.words.length > 0)

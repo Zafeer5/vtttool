@@ -16,6 +16,9 @@ import {
   ChevronUp,
   Music,
   Settings2,
+  Play,
+  Pause,
+  Volume2,
 } from 'lucide-react';
 import {
   ProjectItem,
@@ -66,6 +69,7 @@ interface UnifiedProjectWorkspaceProps {
   onMotionSettingsChange: (settings: MotionSettings) => void;
   onLogoSettingsChange: (settings: LogoSettings) => void;
   onCompileAndQueue: () => void;
+  onUpdateMatches?: (matches: SyncMatch[]) => void;
   onUpdateSlideDuration?: (index: number, newDuration: number) => void;
 }
 
@@ -103,6 +107,7 @@ export const UnifiedProjectWorkspace: React.FC<UnifiedProjectWorkspaceProps> = (
   onMotionSettingsChange,
   onLogoSettingsChange: _onLogoSettingsChange,
   onCompileAndQueue,
+  onUpdateMatches,
   onUpdateSlideDuration,
 }) => {
   const [showTimelineEditor, setShowTimelineEditor] = useState<boolean>(false);
@@ -110,9 +115,48 @@ export const UnifiedProjectWorkspace: React.FC<UnifiedProjectWorkspaceProps> = (
   const [isDraggingImages, setIsDraggingImages] = useState<boolean>(false);
   const [isDraggingAudio, setIsDraggingAudio] = useState<boolean>(false);
   const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
+  const [playingSlideIndex, setPlayingSlideIndex] = useState<number | null>(null);
 
   const imageInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const slideAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handleToggleSlideAudio = (idx: number, startTime: number, endTime: number) => {
+    if (!voiceoverUrl) return;
+
+    if (playingSlideIndex === idx) {
+      if (slideAudioRef.current) {
+        slideAudioRef.current.pause();
+      }
+      setPlayingSlideIndex(null);
+      return;
+    }
+
+    if (!slideAudioRef.current) {
+      slideAudioRef.current = new Audio(voiceoverUrl);
+    } else {
+      if (slideAudioRef.current.src !== voiceoverUrl) {
+        slideAudioRef.current.src = voiceoverUrl;
+      }
+    }
+
+    const audio = slideAudioRef.current;
+    audio.currentTime = startTime;
+    audio.play().catch((err) => console.error('Audio play error:', err));
+    setPlayingSlideIndex(idx);
+
+    const checkTime = () => {
+      if (audio.currentTime >= endTime || audio.paused) {
+        audio.pause();
+        setPlayingSlideIndex(null);
+        audio.removeEventListener('timeupdate', checkTime);
+      }
+    };
+    audio.addEventListener('timeupdate', checkTime);
+    audio.onended = () => {
+      setPlayingSlideIndex(null);
+    };
+  };
 
   const hasMatches = activeMatches.length > 0;
   const isReady = hasMatches && activeMatches.every((m) => !!m.image);
@@ -461,7 +505,7 @@ export const UnifiedProjectWorkspace: React.FC<UnifiedProjectWorkspaceProps> = (
               cues={cues}
               totalDuration={voiceoverDuration || activeTotalDuration}
               voiceoverUrl={voiceoverUrl}
-              onUpdateMatches={(_updatedMatches: SyncMatch[]) => {}}
+              onUpdateMatches={onUpdateMatches || ((_updatedMatches: SyncMatch[]) => {})}
               paragraphs={paragraphs}
               images={images}
               motionSettings={motionSettings}
@@ -496,11 +540,32 @@ export const UnifiedProjectWorkspace: React.FC<UnifiedProjectWorkspaceProps> = (
                   }`}
                 >
                   <div className="space-y-2">
-                    {/* Top Row: Slide Index & Duration */}
-                    <div className="flex items-center justify-between">
-                      <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 font-mono text-[10px] font-bold">
-                        Slide {idx + 1}
-                      </span>
+                    {/* Top Row: Slide Index, Audio Preview & Duration */}
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 font-mono text-[10px] font-bold">
+                          Slide {idx + 1}
+                        </span>
+                        {voiceoverUrl && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSlideAudio(idx, m.startTime, m.endTime)}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 transition cursor-pointer ${
+                              playingSlideIndex === idx
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold animate-pulse'
+                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                            }`}
+                            title={playingSlideIndex === idx ? 'Stop audio' : 'Audition speech segment for this slide'}
+                          >
+                            {playingSlideIndex === idx ? (
+                              <Pause className="w-2.5 h-2.5 text-emerald-400" />
+                            ) : (
+                              <Play className="w-2.5 h-2.5 text-indigo-400" />
+                            )}
+                            <span>{playingSlideIndex === idx ? 'Playing' : 'Hear'}</span>
+                          </button>
+                        )}
+                      </div>
                       <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 font-mono text-[10px] font-semibold">
                         {timingLabel} ({durationFormatted})
                       </span>

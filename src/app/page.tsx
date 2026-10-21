@@ -982,17 +982,18 @@ export default function Home() {
     setCustomMatches((prevMatches) => {
       const current = prevMatches ? [...prevMatches] : [...activeMatches];
       if (index >= 0 && index < current.length) {
-        const diff = newDuration - current[index].duration;
+        const cleanDuration = Math.max(0.2, Number(newDuration.toFixed(3)));
+        const diff = cleanDuration - current[index].duration;
         current[index] = {
           ...current[index],
-          duration: newDuration,
-          endTime: current[index].startTime + newDuration,
+          duration: cleanDuration,
+          endTime: Number((current[index].startTime + cleanDuration).toFixed(3)),
         };
         for (let j = index + 1; j < current.length; j++) {
           current[j] = {
             ...current[j],
-            startTime: current[j].startTime + diff,
-            endTime: current[j].endTime + diff,
+            startTime: Number((current[j].startTime + diff).toFixed(3)),
+            endTime: Number((current[j].endTime + diff).toFixed(3)),
           };
         }
       }
@@ -1682,6 +1683,7 @@ export default function Home() {
             onMotionSettingsChange={updateMotionSettings}
             onLogoSettingsChange={(settings) => setLogoSettings(settings)}
             onCompileAndQueue={handleGenerateVideo}
+            onUpdateMatches={(updated) => setCustomMatches(updated)}
             onUpdateSlideDuration={handleUpdateSlideDuration}
           />
 
