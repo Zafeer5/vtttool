@@ -1,13 +1,34 @@
 @import "tailwindcss";
 
+@theme {
+  --color-app-bg: #0B0F14;
+  --color-surface-primary: #111821;
+  --color-surface-secondary: #18222D;
+  --color-surface-elevated: #202C38;
+  --color-border-studio: #2B3947;
+  --color-text-primary: #F1F5F9;
+  --color-text-secondary: #A4B1C0;
+  --color-text-muted: #748396;
+  --color-teal-accent: #2DD4BF;
+  --color-teal-hover: #5EEAD4;
+  --color-teal-pressed: #14B8A6;
+}
+
 :root {
   color-scheme: dark;
-  --background: #090d16;
-  --foreground: #f1f5f9;
-  --studio-brand: #6366f1;
-  --studio-brand-dark: #4f46e5;
-  --studio-border: #1e293b;
-  --studio-muted: #94a3b8;
+  --background: #0B0F14;
+  --foreground: #F1F5F9;
+  --surface-primary: #111821;
+  --surface-secondary: #18222D;
+  --surface-elevated: #202C38;
+  --border-studio: #2B3947;
+  --text-primary: #F1F5F9;
+  --text-secondary: #A4B1C0;
+  --text-muted: #748396;
+  --studio-brand: #2DD4BF;
+  --studio-brand-hover: #5EEAD4;
+  --studio-brand-pressed: #14B8A6;
+  --studio-selection: rgba(45, 212, 191, 0.2);
 }
 
 * {
@@ -22,34 +43,34 @@ html {
 body {
   min-height: 100vh;
   overflow-x: hidden;
-  color: var(--foreground);
-  background: #090d16;
-  font-family: 'Plus Jakarta Sans', var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-feature-settings: "ss01" on;
+  color: var(--text-primary);
+  background: var(--background);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-feature-settings: "ss01" on, "cv02" on;
 }
 
 ::selection {
-  color: #fff;
+  color: #0B0F14;
   background: var(--studio-brand);
 }
 
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: #0B0F14;
 }
 
 ::-webkit-scrollbar-thumb {
-  border: 1px solid #090d16;
+  border: 1px solid #0B0F14;
   border-radius: 999px;
-  background: #1e293b;
+  background: #202C38;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #2B3947;
 }
 
 button,
@@ -64,7 +85,7 @@ button {
 }
 
 button:not(:disabled) {
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
 button:not(:disabled):active {
@@ -75,19 +96,68 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid rgba(99, 102, 241, 0.4);
+  outline: 2px solid var(--studio-brand);
   outline-offset: 2px;
 }
 
+/* Studio Design System Utilities */
+.bg-studio-app {
+  background-color: #0B0F14;
+}
+
+.bg-studio-surface {
+  background-color: #111821;
+}
+
+.bg-studio-surface-2 {
+  background-color: #18222D;
+}
+
+.bg-studio-elevated {
+  background-color: #202C38;
+}
+
+.border-studio {
+  border-color: #2B3947;
+}
+
+.text-studio-primary {
+  color: #F1F5F9;
+}
+
+.text-studio-secondary {
+  color: #A4B1C0;
+}
+
+.text-studio-muted {
+  color: #748396;
+}
+
+.text-studio-teal {
+  color: #2DD4BF;
+}
+
+.bg-studio-teal {
+  background-color: #2DD4BF;
+}
+
+.hover\:bg-studio-teal-hover:hover {
+  background-color: #5EEAD4;
+}
+
+.active\:bg-studio-teal-pressed:active {
+  background-color: #14B8A6;
+}
+
 .studio-header {
-  border-color: #1e293b;
-  background: rgba(15, 23, 42, 0.75);
+  border-color: #2B3947;
+  background: rgba(17, 24, 33, 0.85);
   backdrop-filter: blur(16px);
 }
 
 .studio-mark {
-  background: linear-gradient(135deg, #6366f1, #4f46e5);
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25);
+  background: linear-gradient(135deg, #2DD4BF, #0D9488);
+  box-shadow: 0 2px 10px rgba(45, 212, 191, 0.25);
 }
 
 @media (prefers-reduced-motion: reduce) {

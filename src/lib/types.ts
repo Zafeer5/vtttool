@@ -68,31 +68,63 @@ export interface TranscriptVersion {
   vtt: string;
 }
 
+export type SyncMode = 'vtt_driven' | 'audio_script' | 'manual' | 'guided_auto';
+
+export type SyncStatus =
+  | 'confirmed'
+  | 'auto_high'
+  | 'needs_review'
+  | 'unmatched'
+  | 'exact'
+  | 'high_confidence'
+  | 'medium_confidence'
+  | 'low_confidence_flagged'
+  | 'manual';
+
+export interface ReviewQueueItem {
+  id: string;
+  slideIndex: number;
+  slideId: string;
+  type: 'missing_image' | 'low_confidence' | 'gap_or_overlap' | 'unmatched_paragraph';
+  severity: 'error' | 'warning' | 'info';
+  title: string;
+  description: string;
+  timeRange: string;
+}
+
 export interface ParallelTranscripts {
   [key: string]: unknown;
 }
 
 export interface SyncMatch {
+  id?: string; // Stable unique ID (e.g. `slide_1_timestamp`)
   index: number; // 0-based
   image: ImageItem | null;
   zoomSeed?: number;
   zoomDirection?: Exclude<ZoomDirection, 'random'>;
   paragraph: ScriptParagraph;
   matchedCue: VttCue | null;
+  matchedCues?: VttCue[]; // Multi-cue support for paragraphs spanning multiple subtitle cues
   startTime: number; // in seconds
   endTime: number;   // in seconds
   duration: number;  // in seconds (endTime - startTime)
   confidence: MatchConfidence;
   confidenceScore?: number; // 0-100 percentage
+  status?: SyncStatus;
+  isManualEdit?: boolean; // When true, prevents automatic recalculation from silently overwriting user adjustments
+  syncMode?: SyncMode;
+  startFrame?: number; // 30fps quantization
+  endFrame?: number;
+  frameCount?: number;
   matchedScript?: MatchedScriptType;
   searchPhrase: string;
   triggerSentence?: string; // the starting sentence or opening words that triggered this match
   matchedTextSnippet?: string;
+  semanticMatchReason?: string; // e.g. "Matched filename keyword: intro"
   warning?: string;
   sentences?: ScriptSentence[]; // individual sentence timings within this paragraph
   speechEndTime?: number; // when speech concluded before pause
   pauseDuration?: number; // silence gap before next paragraph
-  status?: 'exact' | 'high_confidence' | 'medium_confidence' | 'low_confidence_flagged' | 'manual';
 }
 
 export interface SyncAnalysis {
@@ -270,6 +302,7 @@ export interface ProjectItem {
   autoDownloadEnabled: boolean;
   motionSettings?: MotionSettings;
   logoSettings?: LogoSettings;
+  syncMode?: SyncMode;
   cues?: VttCue[];
   paragraphs?: ScriptParagraph[];
   parallelTranscripts?: ParallelTranscripts | null;

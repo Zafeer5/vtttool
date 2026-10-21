@@ -26,7 +26,7 @@ import {
   FolderArchive,
   X,
 } from 'lucide-react';
-import { Header } from '@/components/Header';
+import { StudioHeader } from '@/components/StudioHeader';
 import { VoiceoverUploader } from '@/components/VoiceoverUploader';
 import { ParagraphMatchStep } from '@/components/ParagraphMatchStep';
 import { ImageSyncLiveStep } from '@/components/ImageSyncLiveStep';
@@ -38,7 +38,7 @@ import { PythonScriptModal } from '@/components/PythonScriptModal';
 import { RenderedVideosModal } from '@/components/RenderedVideosModal';
 import { ProjectsSidebar } from '@/components/ProjectsSidebar';
 import { RenderQueueSidebar } from '@/components/RenderQueueSidebar';
-import { UnifiedProjectWorkspace } from '@/components/UnifiedProjectWorkspace';
+import { UnifiedStudioWorkspace2 } from '@/components/UnifiedStudioWorkspace2';
 
 import {
   VttCue,
@@ -55,11 +55,12 @@ import {
   ExportMode,
   QueueRenderItem,
   ProjectItem,
+  SyncMode,
 } from '@/lib/types';
 import { VideoResolution } from '@/lib/image-helper';
 import { parseScript, ScriptSplitMode } from '@/lib/script-parser';
 import { parseVtt, validateVttCues } from '@/lib/vtt-parser';
-import { synchronizeScriptAndVtt } from '@/lib/matcher';
+import { synchronizeScriptAndVtt, intelligentAutoSync } from '@/lib/matcher';
 import { generateSlideshowVideo } from '@/lib/ffmpeg-service';
 import { withClipZoomMetadata } from '@/lib/motion';
 import { saveRenderedBlob, getRenderedBlob, deleteRenderedBlob } from '@/lib/browser-storage';
@@ -268,8 +269,11 @@ export default function Home() {
   // Logo Settings
   const [logoSettings, setLogoSettings] = useState<LogoSettings>(DEFAULT_LOGO_SETTINGS);
 
-  // Custom Match Timeline Overrides
+  // Custom Match Timeline Overrides & History
   const [customMatches, setCustomMatches] = useState<SyncMatch[] | null>(null);
+  const [syncMode, setSyncMode] = useState<SyncMode>('vtt_driven');
+  const [history, setHistory] = useState<SyncMatch[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [isTimelineLocked, setIsTimelineLocked] = useState<boolean>(true);
 
   // Render & Video Output States
@@ -871,8 +875,16 @@ export default function Home() {
         matchedCount: 0,
       };
     }
-    return synchronizeScriptAndVtt(paragraphs, cues, images, parallelTranscripts || undefined, voiceoverDuration);
-  }, [paragraphs, cues, images, parallelTranscripts, voiceoverDuration]);
+    return synchronizeScriptAndVtt(
+      paragraphs,
+      cues,
+      images,
+      parallelTranscripts || undefined,
+      voiceoverDuration,
+      syncMode,
+      customMatches || undefined
+    );
+  }, [paragraphs, cues, images, parallelTranscripts, voiceoverDuration, syncMode, customMatches]);
 
   // Compute active matches: user timeline edits take priority
   const activeMatches: SyncMatch[] = useMemo(() => {
@@ -1001,10 +1013,63 @@ export default function Home() {
     });
   };
 
+  const handleUpdateMatches = useCallback((updatedMatches: SyncMatch[]) => {
+    setCustomMatches(updatedMatches);
+    setHistory((prev) => {
+      const next = prev.slice(0, historyIndex + 1);
+      return [...next, updatedMatches];
+    });
+    setHistoryIndex((prev) => prev + 1);
+  }, [historyIndex]);
+
+  const handleUndo = useCallback(() => {
+    if (historyIndex > 0) {
+      const prevMatches = history[historyIndex - 1];
+      setCustomMatches(prevMatches);
+      setHistoryIndex((prev) => prev - 1);
+    } else if (historyIndex === 0) {
+      setCustomMatches(null);
+      setHistoryIndex(-1);
+    }
+  }, [history, historyIndex]);
+
+  const handleRedo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      const nextMatches = history[historyIndex + 1];
+      setCustomMatches(nextMatches);
+      setHistoryIndex((prev) => prev + 1);
+    }
+  }, [history, historyIndex]);
+
+  // Global Keyboard shortcuts for Undo/Redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  const handleAutoSyncOptimize = useCallback(() => {
+    if (activeMatches.length === 0) return;
+    const optimized = intelligentAutoSync(activeMatches, cues, voiceoverDuration || activeTotalDuration);
+    handleUpdateMatches(optimized.optimizedMatches);
+  }, [activeMatches, cues, voiceoverDuration, activeTotalDuration, handleUpdateMatches]);
+
   const handleClearScript = () => {
     setRawScript('');
     setParagraphs([]);
     setCustomMatches(null);
+    setHistory([]);
+    setHistoryIndex(-1);
   };
 
   const handleRunMatch = () => {
@@ -1636,21 +1701,34 @@ export default function Home() {
 
       {/* Center Main Workspace */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-slate-950 text-slate-100">
-        {/* Top Header */}
-        <Header
-          onOpenLibrary={() => setShowLibraryModal(true)}
-          libraryCount={libraryCount}
-          onOpenQueue={() => setIsQueueOpen((prev) => !prev)}
-          isQueueOpen={isQueueOpen}
+        {/* Top Studio Header */}
+        <StudioHeader
+          projects={projects}
+          activeProject={projects.find((p) => p.id === activeProjectId) || projects[0]}
+          onSelectProject={handleSwitchProject}
+          onCreateProject={handleCreateProject}
+          onRenameProject={handleRenameProject}
+          syncMode={syncMode}
+          onSyncModeChange={(m) => setSyncMode(m)}
+          canUndo={historyIndex > 0}
+          canRedo={historyIndex < history.length - 1}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onOpenValidation={() => setShowValidationModal(true)}
+          onCompileAndRender={handleGenerateVideo}
+          isRendering={isRendering}
           queueCount={queueItems.length}
           activeRenderCount={queueItems.filter((i) => i.status === 'rendering' || i.status === 'preparing').length}
-          activeProjectName={projects.find((p) => p.id === activeProjectId)?.name}
+          onToggleQueue={() => setIsQueueOpen((prev) => !prev)}
+          isQueueOpen={isQueueOpen}
+          libraryCount={libraryCount}
+          onOpenLibrary={() => setShowLibraryModal(true)}
         />
 
-        {/* Scrollable Studio Canvas */}
-        <main className="flex-1 w-full overflow-y-auto p-4 sm:p-5 space-y-4">
-          <UnifiedProjectWorkspace
-            project={projects.find((p) => p.id === activeProjectId) || projects[0]}
+        {/* VTT SlideSync Studio 2.0 Workstation */}
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          <UnifiedStudioWorkspace2
+            matches={activeMatches}
             cues={cues}
             paragraphs={paragraphs}
             images={images}
@@ -1660,17 +1738,10 @@ export default function Home() {
             voiceoverFile={voiceoverFile}
             voiceoverUrl={voiceoverUrl}
             voiceoverDuration={voiceoverDuration}
-            activeMatches={activeMatches}
             activeTotalDuration={activeTotalDuration}
             selectedResolution={selectedResolution}
-            exportMode={exportMode || 'single'}
-            outputFileName={outputFileName}
-            selectedFolder={selectedFolder}
-            autoDownloadEnabled={autoDownloadEnabled}
             motionSettings={activeMotionSettings}
-            logoSettings={logoSettings}
-            isRendering={isRendering}
-            queueCount={queueItems.length}
+            exportMode={exportMode || 'single'}
             onScriptChange={(val) => handleScriptChange(val)}
             onSplitModeChange={(mode) => handleScriptChange(rawScript, mode)}
             onVttChange={handleVttChange}
@@ -1678,14 +1749,11 @@ export default function Home() {
             onImagesChange={(newImgs) => setImages(newImgs)}
             onResolutionChange={(res) => setSelectedResolution(res)}
             onExportModeChange={(mode) => setExportMode(mode)}
-            onOutputFileNameChange={handleOutputFileNameChange}
-            onBrowseFolder={handleBrowseSaveLocation}
+            onUpdateMatches={handleUpdateMatches}
             onMotionSettingsChange={updateMotionSettings}
-            onLogoSettingsChange={(settings) => setLogoSettings(settings)}
-            onCompileAndQueue={handleGenerateVideo}
-            onUpdateMatches={(updated) => setCustomMatches(updated)}
-            onUpdateSlideDuration={handleUpdateSlideDuration}
+            onAutoSyncOptimize={handleAutoSyncOptimize}
           />
+        </div>
 
           {/* Video Player Output Section if active preview is set */}
           {outputUrl && outputBlob && (
@@ -1703,7 +1771,6 @@ export default function Home() {
               />
             </div>
           )}
-        </main>
       </div>
 
       {/* Right Vertical Bar: Dedicated Render Queue Sidebar */}

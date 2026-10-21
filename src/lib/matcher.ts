@@ -1,4 +1,17 @@
-import { VttCue, ScriptParagraph, ImageItem, SyncMatch, SyncAnalysis, MatchConfidence, ScriptSentence, ParallelTranscripts, MatchedScriptType } from './types';
+import {
+  VttCue,
+  ScriptParagraph,
+  ImageItem,
+  SyncMatch,
+  SyncAnalysis,
+  MatchConfidence,
+  ScriptSentence,
+  ParallelTranscripts,
+  MatchedScriptType,
+  SyncMode,
+  SyncStatus,
+  ReviewQueueItem,
+} from './types';
 import { normalizeForSearch, isFuzzyWordMatch, formatSecondsToTimestamp } from './vtt-parser';
 import {
   extractSpokenWordsFromCues,
@@ -526,6 +539,168 @@ export function extractSentenceTimings(
   return sentences;
 }
 
+const COMMON_STOP_WORDS = new Set([
+  'the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'about', 'there',
+  'what', 'when', 'where', 'which', 'who', 'will', 'your', 'their', 'they', 'them',
+  'some', 'into', 'just', 'more', 'also', 'over', 'such', 'only', 'most', 'other',
+  'than', 'then', 'here', 'slide', 'image', 'picture', 'photo', 'video', 'graphic',
+  'show', 'next', 'first', 'second', 'third', 'after', 'before'
+]);
+
+/**
+ * Semantic image matcher:
+ * Connects images with script passages based on filename keyword similarity,
+ * while detecting unused pool images and unmatched paragraphs.
+ */
+export function matchImagesSemantically(
+  images: ImageItem[],
+  paragraphs: ScriptParagraph[]
+): {
+  assignedImages: (ImageItem | null)[];
+  semanticReasons: (string | undefined)[];
+  unusedImages: ImageItem[];
+} {
+  const assignedImages: (ImageItem | null)[] = new Array(paragraphs.length).fill(null);
+  const semanticReasons: (string | undefined)[] = new Array(paragraphs.length).fill(undefined);
+  const usedImageIds = new Set<string>();
+
+  if (images.length === 0 || paragraphs.length === 0) {
+    return { assignedImages, semanticReasons, unusedImages: [...images] };
+  }
+
+  // 1. Extract keyword tokens from image names
+  const imageKeywordsList = images.map((img) => {
+    const baseName = img.name.replace(/\.[^/.]+$/, '').toLowerCase();
+    const tokens = baseName
+      .split(/[^a-z0-9]+/i)
+      .filter((w) => w.length >= 3 && !COMMON_STOP_WORDS.has(w));
+    return { img, tokens };
+  });
+
+  // 2. Extract keyword tokens from paragraph text
+  const paraKeywordsList = paragraphs.map((p) => {
+    const text = (p.text || '').toLowerCase();
+    const words = text
+      .split(/[^a-z0-9]+/i)
+      .filter((w) => w.length >= 3 && !COMMON_STOP_WORDS.has(w));
+    return new Set(words);
+  });
+
+  // 3. Score all pairs
+  const candidateScores: { paraIdx: number; imgIdx: number; score: number; keyword: string }[] = [];
+
+  for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+    const pWords = paraKeywordsList[pIdx];
+    for (let iIdx = 0; iIdx < images.length; iIdx++) {
+      const { tokens } = imageKeywordsList[iIdx];
+      let bestKeyword = '';
+      let matchCount = 0;
+      for (const token of tokens) {
+        if (pWords.has(token)) {
+          matchCount++;
+          if (!bestKeyword) bestKeyword = token;
+        }
+      }
+      if (matchCount > 0) {
+        candidateScores.push({
+          paraIdx: pIdx,
+          imgIdx: iIdx,
+          score: matchCount,
+          keyword: bestKeyword,
+        });
+      }
+    }
+  }
+
+  // Sort descending by keyword match score
+  candidateScores.sort((a, b) => b.score - a.score);
+
+  // Assign greedily
+  for (const match of candidateScores) {
+    if (!assignedImages[match.paraIdx] && !usedImageIds.has(images[match.imgIdx].id)) {
+      assignedImages[match.paraIdx] = images[match.imgIdx];
+      semanticReasons[match.paraIdx] = `Keyword match: "${match.keyword}"`;
+      usedImageIds.add(images[match.imgIdx].id);
+    }
+  }
+
+  // 4. Fill remaining unassigned paragraphs sequentially with unused images
+  let imgPointer = 0;
+  for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+    if (!assignedImages[pIdx]) {
+      while (imgPointer < images.length && usedImageIds.has(images[imgPointer].id)) {
+        imgPointer++;
+      }
+      if (imgPointer < images.length) {
+        assignedImages[pIdx] = images[imgPointer];
+        usedImageIds.add(images[imgPointer].id);
+        imgPointer++;
+      }
+    }
+  }
+
+  const unusedImages = images.filter((img) => !usedImageIds.has(img.id));
+  return { assignedImages, semanticReasons, unusedImages };
+}
+
+/**
+ * Extracts actionable review queue items from synchronized matches
+ */
+export function extractSyncReviewItems(
+  matches: SyncMatch[],
+  images: ImageItem[],
+  cues: VttCue[],
+  audioDuration?: number
+): ReviewQueueItem[] {
+  const items: ReviewQueueItem[] = [];
+
+  matches.forEach((m, idx) => {
+    // 1. Missing Image
+    if (!m.image) {
+      items.push({
+        id: `review_missing_img_${idx}`,
+        slideIndex: idx,
+        slideId: m.id || `slide_${idx + 1}`,
+        type: 'missing_image',
+        severity: 'error',
+        title: `Slide ${idx + 1} has no visual image`,
+        description: `This paragraph will render with a blank visual unless an image is assigned.`,
+        timeRange: `${m.startTime.toFixed(1)}s - ${m.endTime.toFixed(1)}s`,
+      });
+    }
+
+    // 2. Low confidence or fallback timing
+    if (m.confidence === 'fallback' || (m.confidenceScore !== undefined && m.confidenceScore < 65)) {
+      items.push({
+        id: `review_low_conf_${idx}`,
+        slideIndex: idx,
+        slideId: m.id || `slide_${idx + 1}`,
+        type: 'low_confidence',
+        severity: 'warning',
+        title: `Estimated speech timing on Slide ${idx + 1}`,
+        description: `Opening words "${m.searchPhrase}" were not found with high confidence in subtitle cues.`,
+        timeRange: `${m.startTime.toFixed(1)}s - ${m.endTime.toFixed(1)}s`,
+      });
+    }
+
+    // 3. Very short duration
+    if (m.duration < 1.0) {
+      items.push({
+        id: `review_short_${idx}`,
+        slideIndex: idx,
+        slideId: m.id || `slide_${idx + 1}`,
+        type: 'gap_or_overlap',
+        severity: 'warning',
+        title: `Very short duration (${m.duration.toFixed(2)}s) on Slide ${idx + 1}`,
+        description: `Slide duration is under 1.0 second and may flash by too quickly.`,
+        timeRange: `${m.startTime.toFixed(1)}s - ${m.endTime.toFixed(1)}s`,
+      });
+    }
+  });
+
+  return items;
+}
+
 /**
  * Synchronizes script paragraphs and images against VTT speech cues.
  *
@@ -542,7 +717,9 @@ export function synchronizeScriptAndVtt(
   cues: VttCue[],
   images: ImageItem[],
   parallelTranscripts?: ParallelTranscripts,
-  audioDuration?: number
+  audioDuration?: number,
+  mode: SyncMode = 'vtt_driven',
+  existingMatches?: SyncMatch[]
 ): SyncAnalysis {
   const matches: SyncMatch[] = [];
   const paragraphCount = paragraphs.length;
@@ -895,9 +1072,30 @@ export function synchronizeScriptAndVtt(
   // Each paragraph slide stays active from its start timestamp until the NEXT paragraph's opening 3-4 words match.
   let matchedCount = 0;
 
+  // Semantic proposal if guided_auto mode is selected
+  const semanticProposal =
+    mode === 'guided_auto' && images.length > 0
+      ? matchImagesSemantically(images, effectiveParagraphs)
+      : null;
+
   for (let i = 0; i < effectiveParagraphs.length; i++) {
     const paragraph = effectiveParagraphs[i];
-    const image = i < images.length ? images[i] : null;
+    const existing = existingMatches?.[i];
+    const isManual = !!existing?.isManualEdit;
+
+    // Determine image assignment (preserves manual assignment, otherwise semantic or sequential)
+    let image: ImageItem | null = null;
+    let semanticReason: string | undefined = undefined;
+
+    if (isManual && existing?.image !== undefined) {
+      image = existing.image;
+    } else if (semanticProposal && semanticProposal.assignedImages[i]) {
+      image = semanticProposal.assignedImages[i];
+      semanticReason = semanticProposal.semanticReasons[i];
+    } else {
+      image = i < images.length ? images[i] : null;
+    }
+
     const { start, cue, confidence, matchedSnippet, triggerPhrase } = rawTimestamps[i];
 
     if (confidence !== 'fallback') {
@@ -922,8 +1120,17 @@ export function synchronizeScriptAndVtt(
       }
     }
 
+    // Preserve user's manual boundaries if previously edited
+    let finalStart = Number(start.toFixed(3));
+    let finalEnd = Number(end.toFixed(3));
+
+    if (isManual && existing) {
+      finalStart = existing.startTime;
+      finalEnd = existing.endTime;
+    }
+
     // Ensure positive duration
-    const duration = Math.max(0.5, Number((end - start).toFixed(3)));
+    const duration = Math.max(0.2, Number((finalEnd - finalStart).toFixed(3)));
 
     let warning: string | undefined;
     if (!image) {
@@ -933,25 +1140,75 @@ export function synchronizeScriptAndVtt(
     }
 
     const score = rawTimestamps[i].confidenceScore || (confidence === 'exact' ? 98 : confidence === 'high' ? 88 : confidence === 'fuzzy' ? 75 : 50);
-    const status = score >= 95 ? 'exact' : score >= 85 ? 'high_confidence' : score >= 70 ? 'medium_confidence' : 'low_confidence_flagged';
+    
+    let status: SyncStatus = 'auto_high';
+    if (isManual) {
+      status = 'confirmed';
+    } else if (!image || confidence === 'fallback' || score < 70) {
+      status = 'needs_review';
+    } else if (score >= 85) {
+      status = 'auto_high';
+    } else {
+      status = 'needs_review';
+    }
+
+    // Stable ID
+    const stableId = existing?.id || `slide_${i + 1}_${Math.round(finalStart * 1000)}_${Math.random().toString(36).substring(2, 6)}`;
+
+    // Quantized frame boundaries at 30fps
+    const startFrame = Math.round(finalStart * 30);
+    const endFrame = Math.round(finalEnd * 30);
+    const frameCount = Math.max(1, endFrame - startFrame);
+
+    // Multi-cue capture for all subtitle cues in this slide's time slice
+    const matchedCuesInSpan = cues.filter(
+      (c) => (c.startTime >= finalStart && c.startTime < finalEnd) ||
+             (c.endTime > finalStart && c.endTime <= finalEnd) ||
+             (c.startTime <= finalStart && c.endTime >= finalEnd)
+    );
 
     matches.push({
+      id: stableId,
       index: i,
       image,
       paragraph,
       matchedCue: cue,
-      startTime: Number(start.toFixed(3)),
-      endTime: Number(end.toFixed(3)),
+      matchedCues: matchedCuesInSpan,
+      startTime: finalStart,
+      endTime: finalEnd,
       duration,
       confidence,
       confidenceScore: score,
-      matchedScript: rawTimestamps[i].matchedScript || 'English',
       status,
+      isManualEdit: isManual,
+      syncMode: mode,
+      startFrame,
+      endFrame,
+      frameCount,
+      matchedScript: rawTimestamps[i].matchedScript || 'English',
       searchPhrase: triggerPhrase,
       triggerSentence: triggerPhrase,
       matchedTextSnippet: matchedSnippet || (cue ? cue.cleanText : undefined),
+      semanticMatchReason: semanticReason,
       warning,
     });
+  }
+
+  // If guided_auto mode: optimize cuts against silence gaps (respecting manual locks)
+  if (mode === 'guided_auto' && matches.length > 0) {
+    const optimized = intelligentAutoSync(matches, cues, effectiveAudioEnd);
+    for (let k = 0; k < matches.length; k++) {
+      if (!matches[k].isManualEdit && optimized.optimizedMatches[k]) {
+        matches[k].startTime = optimized.optimizedMatches[k].startTime;
+        matches[k].endTime = optimized.optimizedMatches[k].endTime;
+        matches[k].duration = optimized.optimizedMatches[k].duration;
+        const sFrame = Math.round(matches[k].startTime * 30);
+        const eFrame = Math.round(matches[k].endTime * 30);
+        matches[k].startFrame = sFrame;
+        matches[k].endFrame = eFrame;
+        matches[k].frameCount = Math.max(1, eFrame - sFrame);
+      }
+    }
   }
 
   // Step 3: Extract sentence-level timings for each paragraph slide

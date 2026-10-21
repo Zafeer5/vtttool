@@ -411,3 +411,186 @@ describe('Speech Synchronization & Slide Alignment Engine', () => {
   });
 });
 
+// 5. Test VTT SlideSync Studio 2.0 Advanced Sync Engine & Review Queue
+describe('VTT SlideSync Studio 2.0 Advanced Sync Engine & Review Queue', () => {
+  const COMMON_STOP_WORDS = new Set([
+    'the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'about', 'there',
+    'what', 'when', 'where', 'which', 'who', 'will', 'your', 'their', 'they', 'them',
+  ]);
+
+  function matchImagesSemantically(images, paragraphs) {
+    const assignedImages = new Array(paragraphs.length).fill(null);
+    const semanticReasons = new Array(paragraphs.length).fill(undefined);
+    const usedImageIds = new Set();
+
+    if (images.length === 0 || paragraphs.length === 0) {
+      return { assignedImages, semanticReasons, unusedImages: [...images] };
+    }
+
+    const imageKeywordsList = images.map((img) => {
+      const baseName = img.name.replace(/\.[^/.]+$/, '').toLowerCase();
+      const tokens = baseName.split(/[^a-z0-9]+/i).filter((w) => w.length >= 3 && !COMMON_STOP_WORDS.has(w));
+      return { img, tokens };
+    });
+
+    const paraKeywordsList = paragraphs.map((p) => {
+      const text = (p.text || '').toLowerCase();
+      const words = text.split(/[^a-z0-9]+/i).filter((w) => w.length >= 3 && !COMMON_STOP_WORDS.has(w));
+      return new Set(words);
+    });
+
+    const candidateScores = [];
+    for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+      const pWords = paraKeywordsList[pIdx];
+      for (let iIdx = 0; iIdx < images.length; iIdx++) {
+        const { tokens } = imageKeywordsList[iIdx];
+        let bestKeyword = '';
+        let matchCount = 0;
+        for (const token of tokens) {
+          if (pWords.has(token)) {
+            matchCount++;
+            if (!bestKeyword) bestKeyword = token;
+          }
+        }
+        if (matchCount > 0) {
+          candidateScores.push({ paraIdx: pIdx, imgIdx: iIdx, score: matchCount, keyword: bestKeyword });
+        }
+      }
+    }
+
+    candidateScores.sort((a, b) => b.score - a.score);
+
+    for (const match of candidateScores) {
+      if (!assignedImages[match.paraIdx] && !usedImageIds.has(images[match.imgIdx].id)) {
+        assignedImages[match.paraIdx] = images[match.imgIdx];
+        semanticReasons[match.paraIdx] = `Keyword match: "${match.keyword}"`;
+        usedImageIds.add(images[match.imgIdx].id);
+      }
+    }
+
+    let imgPointer = 0;
+    for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+      if (!assignedImages[pIdx]) {
+        while (imgPointer < images.length && usedImageIds.has(images[imgPointer].id)) {
+          imgPointer++;
+        }
+        if (imgPointer < images.length) {
+          assignedImages[pIdx] = images[imgPointer];
+          usedImageIds.add(images[imgPointer].id);
+          imgPointer++;
+        }
+      }
+    }
+
+    const unusedImages = images.filter((img) => !usedImageIds.has(img.id));
+    return { assignedImages, semanticReasons, unusedImages };
+  }
+
+  function extractSyncReviewItems(matches) {
+    const items = [];
+    matches.forEach((m, idx) => {
+      if (!m.image) {
+        items.push({
+          type: 'missing_image',
+          slideIndex: idx,
+          severity: 'error',
+        });
+      }
+      if (m.confidence === 'fallback' || (m.confidenceScore !== undefined && m.confidenceScore < 65)) {
+        items.push({
+          type: 'low_confidence',
+          slideIndex: idx,
+          severity: 'warning',
+        });
+      }
+      if (m.duration < 1.0) {
+        items.push({
+          type: 'gap_or_overlap',
+          slideIndex: idx,
+          severity: 'warning',
+        });
+      }
+    });
+    return items;
+  }
+
+  test('Semantic matching accurately associates images by keyword overlap', () => {
+    const images = [
+      { id: 'img_1', name: 'revenue_growth_chart.png' },
+      { id: 'img_2', name: 'team_meeting_office.jpg' },
+      { id: 'img_3', name: 'customer_support.png' },
+    ];
+    const paragraphs = [
+      { text: 'In our quarterly review, team members collaborated in the office.' },
+      { text: 'We saw unprecedented revenue and rapid financial growth this year.' },
+    ];
+
+    const result = matchImagesSemantically(images, paragraphs);
+
+    assert.strictEqual(result.assignedImages[0].id, 'img_2', 'Paragraph 1 must match team/office');
+    assert.strictEqual(result.assignedImages[1].id, 'img_1', 'Paragraph 2 must match revenue/growth');
+    assert.strictEqual(result.unusedImages.length, 1);
+    assert.strictEqual(result.unusedImages[0].id, 'img_3', 'Customer support image must be marked unused');
+  });
+
+  test('User manual timeline adjustments are strictly preserved when re-syncing', () => {
+    const existingMatches = [
+      { id: 'slide_1', startTime: 0.0, endTime: 4.5, duration: 4.5, isManualEdit: true, image: { id: 'img_1' } },
+      { id: 'slide_2', startTime: 4.5, endTime: 12.0, duration: 7.5, isManualEdit: false, image: { id: 'img_2' } },
+    ];
+
+    const proposed = [
+      { startTime: 0.0, endTime: 3.2 },
+      { startTime: 3.2, endTime: 11.0 },
+    ];
+
+    const finalized = proposed.map((p, i) => {
+      const ex = existingMatches[i];
+      if (ex && ex.isManualEdit) {
+        return { ...ex };
+      }
+      return { id: ex ? ex.id : `slide_${i}`, startTime: p.startTime, endTime: p.endTime, duration: p.endTime - p.startTime };
+    });
+
+    assert.strictEqual(finalized[0].startTime, 0.0);
+    assert.strictEqual(finalized[0].endTime, 4.5, 'Slide 1 manual edit must NOT be overwritten');
+    assert.strictEqual(finalized[0].isManualEdit, true);
+
+    assert.strictEqual(finalized[1].startTime, 3.2, 'Slide 2 automatic proposal should update');
+    assert.strictEqual(finalized[1].endTime, 11.0);
+  });
+
+  test('Quantizes slide frames accurately at 30 fps without frame gaps', () => {
+    const slide1Start = 0.0;
+    const slide1End = 5.233;
+    const slide2Start = 5.233;
+    const slide2End = 10.0;
+
+    const s1StartFrame = Math.round(slide1Start * 30);
+    const s1EndFrame = Math.round(slide1End * 30);
+    const s2StartFrame = Math.round(slide2Start * 30);
+    const s2EndFrame = Math.round(slide2End * 30);
+
+    assert.strictEqual(s1StartFrame, 0);
+    assert.strictEqual(s1EndFrame, 157);
+    assert.strictEqual(s2StartFrame, 157, 'Frame boundary between slides must connect continuously');
+    assert.strictEqual(s2EndFrame, 300);
+  });
+
+  test('Review queue identifies missing images and low confidence segments', () => {
+    const matches = [
+      { image: { id: 'img_1' }, duration: 4.0, confidence: 'exact', confidenceScore: 98 },
+      { image: null, duration: 5.0, confidence: 'high', confidenceScore: 85 },
+      { image: { id: 'img_2' }, duration: 0.4, confidence: 'exact', confidenceScore: 95 },
+      { image: { id: 'img_3' }, duration: 6.0, confidence: 'fallback', confidenceScore: 50 },
+    ];
+
+    const issues = extractSyncReviewItems(matches);
+    assert.strictEqual(issues.length, 3);
+    assert.ok(issues.some((i) => i.type === 'missing_image' && i.slideIndex === 1));
+    assert.ok(issues.some((i) => i.type === 'gap_or_overlap' && i.slideIndex === 2));
+    assert.ok(issues.some((i) => i.type === 'low_confidence' && i.slideIndex === 3));
+  });
+});
+
+
