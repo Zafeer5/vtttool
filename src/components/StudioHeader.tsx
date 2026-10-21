@@ -7,20 +7,15 @@ import {
   Undo2,
   Redo2,
   CheckCircle2,
-  Sliders,
   FolderOpen,
-  Sparkles,
-  DownloadCloud,
   ChevronDown,
   Plus,
   Play,
-  RotateCcw,
   ShieldCheck,
   Video,
   Archive,
 } from 'lucide-react';
 import { ProjectItem, SyncMode, ExportMode } from '@/lib/types';
-import { VideoResolution } from '@/lib/image-helper';
 
 interface StudioHeaderProps {
   projects: ProjectItem[];
@@ -98,25 +93,25 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
   };
 
   return (
-    <header className="h-14 border-b border-[#2B3947] bg-[#111821] px-4 flex items-center justify-between gap-3 select-none z-30">
+    <header className="h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between gap-3 select-none z-30 shadow-xs">
       {/* LEFT: BRANDING & PROJECT SELECTOR */}
       <div className="flex items-center gap-3 min-w-0">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#2DD4BF] to-[#0D9488] flex items-center justify-center shadow-[0_2px_10px_rgba(45,212,191,0.25)] text-[#0B0F14]">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#F97316] to-[#EA580C] flex items-center justify-center shadow-md shadow-orange-500/20 text-white">
             <Film className="w-4 h-4" />
           </div>
           <div className="hidden sm:block leading-tight">
-            <h1 className="text-xs font-bold tracking-tight text-[#F1F5F9] flex items-center gap-1.5">
+            <h1 className="text-xs font-bold tracking-tight text-slate-900 flex items-center gap-1.5">
               <span>VTT SlideSync</span>
-              <span className="px-1.5 py-0.2 rounded bg-[#2DD4BF]/15 text-[#2DD4BF] text-[9px] font-mono font-bold tracking-wide">
-                2.0
+              <span className="px-1.5 py-0.2 rounded bg-orange-50 text-orange-700 border border-orange-200 text-[9px] font-mono font-bold tracking-wide">
+                Studio
               </span>
             </h1>
-            <p className="text-[10px] text-[#748396]">Production Studio</p>
+            <p className="text-[10px] text-slate-500 font-medium">Video Synchronization Engine</p>
           </div>
         </div>
 
-        <div className="h-5 w-px bg-[#2B3947] hidden md:block" />
+        <div className="h-5 w-px bg-slate-200 hidden md:block" />
 
         {/* Project Dropdown / Rename */}
         <div className="relative">
@@ -134,23 +129,23 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
                   setIsEditingTitle(false);
                 }
               }}
-              className="px-2 py-1 rounded bg-[#18222D] border border-[#2DD4BF] text-xs font-semibold text-[#F1F5F9] outline-none"
+              className="px-2.5 py-1 rounded-md bg-white border-2 border-orange-500 text-xs font-semibold text-slate-900 outline-none shadow-xs"
             />
           ) : (
             <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => setShowProjectMenu(!showProjectMenu)}
-                className="px-2.5 py-1 rounded-md bg-[#18222D] hover:bg-[#202C38] border border-[#2B3947] text-xs font-semibold text-[#F1F5F9] flex items-center gap-1.5 transition cursor-pointer max-w-[180px] truncate"
+                className="px-2.5 py-1 rounded-md bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800 flex items-center gap-1.5 transition cursor-pointer max-w-[180px] truncate shadow-2xs"
                 title="Switch project"
               >
                 <span className="truncate">{activeProject.name}</span>
-                <ChevronDown className="w-3 h-3 text-[#A4B1C0]" />
+                <ChevronDown className="w-3 h-3 text-slate-500" />
               </button>
               <button
                 type="button"
                 onClick={() => setIsEditingTitle(true)}
-                className="p-1 rounded text-[#748396] hover:text-[#A4B1C0] hover:bg-[#18222D] transition text-[10px]"
+                className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition text-[10px]"
                 title="Rename project"
               >
                 Edit
@@ -160,8 +155,8 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
 
           {/* Project Menu Dropdown */}
           {showProjectMenu && (
-            <div className="absolute top-full left-0 mt-1 w-52 rounded-lg bg-[#18222D] border border-[#2B3947] shadow-2xl p-1.5 z-50">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[#748396] px-2 py-1">
+            <div className="absolute top-full left-0 mt-1.5 w-52 rounded-lg bg-white border border-slate-200 shadow-xl p-1.5 z-50">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 py-1">
                 Projects ({projects.length})
               </div>
               <div className="max-h-48 overflow-y-auto space-y-0.5">
@@ -175,23 +170,23 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
                     }}
                     className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition cursor-pointer ${
                       p.id === activeProject.id
-                        ? 'bg-[#2DD4BF]/15 text-[#2DD4BF] font-semibold'
-                        : 'text-[#F1F5F9] hover:bg-[#202C38]'
+                        ? 'bg-orange-50 text-orange-700 font-semibold'
+                        : 'text-slate-700 hover:bg-slate-50'
                     }`}
                   >
                     <span className="truncate">{p.name}</span>
-                    {p.id === activeProject.id && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
+                    {p.id === activeProject.id && <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-orange-600" />}
                   </button>
                 ))}
               </div>
-              <div className="border-t border-[#2B3947] mt-1 pt-1">
+              <div className="border-t border-slate-100 mt-1 pt-1">
                 <button
                   type="button"
                   onClick={() => {
                     onCreateProject();
                     setShowProjectMenu(false);
                   }}
-                  className="w-full text-left px-2.5 py-1.5 rounded text-xs text-[#2DD4BF] hover:bg-[#2DD4BF]/10 flex items-center gap-1.5 transition cursor-pointer font-medium"
+                  className="w-full text-left px-2.5 py-1.5 rounded text-xs text-orange-600 hover:bg-orange-50 flex items-center gap-1.5 transition cursor-pointer font-medium"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Create New Project</span>
@@ -205,12 +200,12 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
       {/* CENTER: SYNC MODE SELECTOR & UNDO/REDO */}
       <div className="hidden lg:flex items-center gap-2">
         {/* Undo / Redo */}
-        <div className="flex items-center bg-[#18222D] rounded-lg border border-[#2B3947] p-0.5">
+        <div className="flex items-center bg-slate-100 rounded-lg border border-slate-200 p-0.5">
           <button
             type="button"
             onClick={onUndo}
             disabled={!canUndo}
-            className="p-1.5 rounded text-[#A4B1C0] hover:text-[#F1F5F9] disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer"
+            className="p-1.5 rounded text-slate-500 hover:text-slate-900 disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer"
             title="Undo timeline adjustment (Ctrl+Z)"
           >
             <Undo2 className="w-3.5 h-3.5" />
@@ -219,7 +214,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             type="button"
             onClick={onRedo}
             disabled={!canRedo}
-            className="p-1.5 rounded text-[#A4B1C0] hover:text-[#F1F5F9] disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer"
+            className="p-1.5 rounded text-slate-500 hover:text-slate-900 disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer"
             title="Redo timeline adjustment (Ctrl+Y)"
           >
             <Redo2 className="w-3.5 h-3.5" />
@@ -227,7 +222,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
         </div>
 
         {/* Sync Mode Pill */}
-        <div className="flex items-center bg-[#18222D] rounded-lg border border-[#2B3947] p-0.5">
+        <div className="flex items-center bg-slate-100 rounded-lg border border-slate-200 p-0.5">
           {(['vtt_driven', 'audio_script', 'guided_auto', 'manual'] as SyncMode[]).map((mode) => {
             const isSelected = syncMode === mode;
             return (
@@ -237,8 +232,8 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
                 onClick={() => onSyncModeChange(mode)}
                 className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition cursor-pointer ${
                   isSelected
-                    ? 'bg-[#2DD4BF] text-[#0B0F14] shadow-sm font-bold'
-                    : 'text-[#A4B1C0] hover:text-[#F1F5F9] hover:bg-[#202C38]'
+                    ? 'bg-orange-600 text-white shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                 }`}
                 title={syncModeLabels[mode].desc}
               >
@@ -255,13 +250,13 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
         <button
           type="button"
           onClick={onOpenLibrary}
-          className="px-2.5 py-1.5 rounded-lg border border-[#2B3947] bg-[#18222D] hover:bg-[#202C38] text-[#F1F5F9] text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+          className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-orange-50/60 hover:border-orange-300 text-slate-700 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
           title="Open Rendered Videos Library"
         >
-          <FolderOpen className="w-3.5 h-3.5 text-[#2DD4BF]" />
+          <FolderOpen className="w-3.5 h-3.5 text-orange-600" />
           <span className="hidden sm:inline">Library</span>
           {libraryCount > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-[#2B3947] text-[#A4B1C0] font-mono text-[10px]">
+            <span className="px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-700 font-mono text-[10px]">
               {libraryCount}
             </span>
           )}
@@ -271,10 +266,10 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
         <button
           type="button"
           onClick={onToggleQueue}
-          className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition cursor-pointer ${
+          className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition cursor-pointer shadow-2xs ${
             isQueueOpen
-              ? 'border-[#2DD4BF] bg-[#2DD4BF]/15 text-[#2DD4BF]'
-              : 'border-[#2B3947] bg-[#18222D] hover:bg-[#202C38] text-[#F1F5F9]'
+              ? 'border-orange-500 bg-orange-50 text-orange-700'
+              : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
           }`}
           title="Toggle Background Render Queue"
         >
@@ -284,8 +279,8 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             <span
               className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
                 activeRenderCount > 0
-                  ? 'bg-[#2DD4BF] text-[#0B0F14] animate-pulse'
-                  : 'bg-[#2B3947] text-[#A4B1C0]'
+                  ? 'bg-orange-600 text-white animate-pulse'
+                  : 'bg-slate-100 text-slate-700'
               }`}
             >
               {queueCount}
@@ -297,22 +292,22 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
         <button
           type="button"
           onClick={onOpenValidation}
-          className="px-2.5 py-1.5 rounded-lg border border-[#2B3947] bg-[#18222D] hover:bg-[#202C38] text-[#A4B1C0] hover:text-[#F1F5F9] text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+          className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
           title="Run pre-render diagnostic checklist"
         >
-          <ShieldCheck className="w-3.5 h-3.5 text-[#2DD4BF]" />
+          <ShieldCheck className="w-3.5 h-3.5 text-orange-600" />
           <span className="hidden md:inline">Validate</span>
         </button>
 
         {/* Export Mode Toggle: Single MP4 vs Clips ZIP */}
-        <div className="flex items-center bg-[#18222D] rounded-lg border border-[#2B3947] p-0.5" title="Select export output format">
+        <div className="flex items-center bg-slate-100 rounded-lg border border-slate-200 p-0.5" title="Select export output format">
           <button
             type="button"
             onClick={() => onExportModeChange('single')}
             className={`px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer ${
               exportMode === 'single'
-                ? 'bg-[#2DD4BF] text-[#0B0F14] font-bold shadow-sm'
-                : 'text-[#A4B1C0] hover:text-[#F1F5F9] hover:bg-[#202C38]'
+                ? 'bg-orange-600 text-white font-bold shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
             title="Export as a single continuous MP4 video"
           >
@@ -324,8 +319,8 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             onClick={() => onExportModeChange('clips_zip')}
             className={`px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer ${
               exportMode === 'clips_zip'
-                ? 'bg-[#2DD4BF] text-[#0B0F14] font-bold shadow-sm'
-                : 'text-[#A4B1C0] hover:text-[#F1F5F9] hover:bg-[#202C38]'
+                ? 'bg-orange-600 text-white font-bold shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
             title="Export as individual slide video clips in a ZIP package"
           >
@@ -339,9 +334,9 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
           type="button"
           onClick={onCompileAndRender}
           disabled={isRendering}
-          className="px-3.5 py-1.5 rounded-lg bg-[#2DD4BF] hover:bg-[#5EEAD4] active:bg-[#14B8A6] text-[#0B0F14] text-xs font-bold flex items-center gap-1.5 shadow-[0_2px_12px_rgba(45,212,191,0.25)] transition cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+          className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 active:from-orange-800 active:to-orange-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-orange-500/25 transition cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
         >
-          <Play className="w-3.5 h-3.5 fill-[#0B0F14]" />
+          <Play className="w-3.5 h-3.5 fill-white" />
           <span>{exportMode === 'clips_zip' ? 'Render Clips ZIP' : 'Render Video'}</span>
         </button>
       </div>

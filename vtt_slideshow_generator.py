@@ -971,31 +971,42 @@ def compute_unified_timeline(
     if slide_timings is not None and not has_timeline:
         raise ValueError("Timeline timing count does not match the clip count.")
 
-    # Quantize absolute clip boundaries instead of redistributing duration error
-    # into the final clip.
+    # Quantize absolute clip boundaries with seamless continuity
     frame_counts = []
     start_frames = []
     end_frames = []
     current_frame = 0
+
     for index, duration in enumerate(durations):
         if has_timeline:
             timing = slide_timings[index]
             if timing.get("startTime") is None or timing.get("endTime") is None:
                 raise ValueError(f"Timeline boundaries are missing for clip {index + 1}.")
-            start_frame = max(0, int(round(float(timing["startTime"]) * fps)))
+            
+            # Slide 0 always begins at frame 0 so intro speech or music displays Slide 1 without dead black gaps
+            if index == 0:
+                start_frame = 0
+            else:
+                # Snap to previous clip's end frame to prevent fractional rounding jitter or gaps
+                nominal_start = max(0, int(round(float(timing["startTime"]) * fps)))
+                start_frame = max(current_frame, nominal_start)
+
             end_frame = max(start_frame + 1, int(round(float(timing["endTime"]) * fps)))
         else:
             start_frame = current_frame
             end_frame = start_frame + max(1, int(round(float(duration) * fps)))
+
         start_frames.append(start_frame)
         end_frames.append(end_frame)
         frame_counts.append(end_frame - start_frame)
         current_frame = end_frame
 
-    if not has_timeline and target_total_duration and target_total_duration > 0:
-        target_total_frames = max(sum(frame_counts), int(round(target_total_duration * fps)))
-        frame_counts[-1] += target_total_frames - sum(frame_counts)
-        end_frames[-1] = start_frames[-1] + frame_counts[-1]
+    # If no explicit timeline is provided and target duration exceeds slide duration, extend the final slide
+    if not has_timeline and target_total_duration and target_total_duration > 0 and len(frame_counts) > 0:
+        target_total_frames = max(current_frame, int(round(target_total_duration * fps)))
+        if target_total_frames > current_frame:
+            frame_counts[-1] += target_total_frames - current_frame
+            end_frames[-1] = start_frames[-1] + frame_counts[-1]
 
     total_frames = max(end_frames, default=0)
     final_total_dur = total_frames / float(fps)
@@ -1197,11 +1208,11 @@ def render_video_native(
                     ffmpeg_exe, "-y",
                     "-threads", str(threads_per_worker),
                     "-f", "lavfi",
-                    "-i", f"color=c=black:s={target_width}x{target_height}:r={fps}:d={duration:.6f}",
+                    "-i", f"color=c=black:s={target_width}x{target_height}:r={fps}",
                     "-r", str(fps),
                     *chunk_enc_params,
                     "-pix_fmt", "nv12" if enc_name == "h264_qsv" else "yuv420p",
-                    "-t", f"{duration:.6f}",
+                    "-vframes", str(frame_count),
                     "-movflags", "+faststart",
                     chunk_path,
                 ]
@@ -1213,12 +1224,11 @@ def render_video_native(
             img_path = normalized_paths[slide_index]
 
             # 1. FAST PATH FOR STATIC SLIDES (Zoom Disabled)
-            # Hardware encoded via single-image loop in ~0.04s per segment
+            # Frame-accurate hardware/CPU encoding via exact frame count
             if not zoom_enabled or zoom_pct_val <= 0.0001:
                 inputs = [
                     "-loop", "1",
-                    "-framerate", "1",
-                    "-t", f"{duration:.6f}",
+                    "-framerate", str(fps),
                     "-i", img_path,
                 ]
                 if preprocessed_logo:
@@ -1232,7 +1242,7 @@ def render_video_native(
                         "-r", str(fps),
                         *chunk_enc_params,
                         "-pix_fmt", "nv12" if enc_name == "h264_qsv" else "yuv420p",
-                        "-t", f"{duration:.6f}",
+                        "-vframes", str(frame_count),
                         "-movflags", "+faststart",
                         chunk_path,
                     ]
@@ -1246,7 +1256,7 @@ def render_video_native(
                         "-r", str(fps),
                         *chunk_enc_params,
                         "-pix_fmt", "nv12" if enc_name == "h264_qsv" else "yuv420p",
-                        "-t", f"{duration:.6f}",
+                        "-vframes", str(frame_count),
                         "-movflags", "+faststart",
                         chunk_path,
                     ]
@@ -1609,10 +1619,10 @@ def render_clips_zip_native(
             else:
                 chunk_enc_params = enc_args
 
-            # In-memory direct audio slicing: zero disk read/write intermediate files
+            # Sample-accurate direct audio slicing: zero disk read/write intermediate files
             if has_audio_file:
-                audio_inputs = ["-ss", f"{st:.6f}", "-t", f"{dur:.6f}", "-i", audio_path]
-                audio_filter = f"apad=whole_dur={dur:.6f}"
+                audio_inputs = ["-i", audio_path]
+                audio_filter = f"atrim=start={st:.6f}:end={et:.6f},asetpts=PTS-STARTPTS,apad=whole_dur={dur:.6f}"
             else:
                 audio_inputs = ["-f", "lavfi", "-t", f"{dur:.6f}", "-i", "anullsrc=r=44100:cl=stereo"]
                 audio_filter = "anull"
@@ -1622,8 +1632,7 @@ def render_clips_zip_native(
                 if preprocessed_logo:
                     inputs = [
                         "-loop", "1",
-                        "-framerate", "1",
-                        "-t", f"{dur:.6f}",
+                        "-framerate", "30",
                         "-i", img_p,
                         "-i", preprocessed_logo,
                         *audio_inputs,
@@ -1643,6 +1652,7 @@ def render_clips_zip_native(
                         "-c:a", "aac",
                         "-b:a", "192k",
                         "-ar", "44100",
+                        "-vframes", str(f_count),
                         "-t", f"{dur:.6f}",
                         "-movflags", "+faststart",
                         clip_out,
@@ -1650,8 +1660,7 @@ def render_clips_zip_native(
                 else:
                     inputs = [
                         "-loop", "1",
-                        "-framerate", "1",
-                        "-t", f"{dur:.6f}",
+                        "-framerate", "30",
                         "-i", img_p,
                         *audio_inputs,
                     ]
@@ -1669,6 +1678,7 @@ def render_clips_zip_native(
                         "-c:a", "aac",
                         "-b:a", "192k",
                         "-ar", "44100",
+                        "-vframes", str(f_count),
                         "-t", f"{dur:.6f}",
                         "-movflags", "+faststart",
                         clip_out,
@@ -1780,10 +1790,12 @@ def render_clips_zip_native(
                         "-s", f"{target_width}x{target_height}",
                         "-r", "30",
                         "-i", "pipe:0",
-                        "-ss", f"{start_time:.3f}",
-                        "-t", f"{clip_duration:.3f}",
-                        "-i", audio_path,
+                        *audio_inputs,
+                        "-map", "0:v:0",
+                        "-map", "1:a:0",
+                        "-af", audio_filter,
                         "-frames:v", str(f_count),
+                        "-t", f"{dur:.6f}",
                         "-r", "30",
                         "-c:v", "libx264",
                         "-preset", "ultrafast",

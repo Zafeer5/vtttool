@@ -1127,6 +1127,9 @@ export function synchronizeScriptAndVtt(
     if (isManual && existing) {
       finalStart = existing.startTime;
       finalEnd = existing.endTime;
+    } else if (i === 0) {
+      // First slide always starts from 0.000 so the video begins immediately without black gaps
+      finalStart = 0;
     }
 
     // Ensure positive duration

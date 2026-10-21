@@ -1685,7 +1685,7 @@ export default function Home() {
   }, [activeModalItem, renderProgress]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans select-none">
+    <div className="flex h-screen w-screen overflow-hidden bg-white text-slate-900 font-sans select-none">
       {/* Left Vertical Bar: Projects Sidebar */}
       <ProjectsSidebar
         projects={projects}
@@ -1700,7 +1700,7 @@ export default function Home() {
       />
 
       {/* Center Main Workspace */}
-      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-slate-950 text-slate-100">
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white text-slate-900">
         {/* Top Studio Header */}
         <StudioHeader
           projects={projects}

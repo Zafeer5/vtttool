@@ -296,27 +296,27 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     return (
       <section
         id="output-section"
-        className="rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5 sm:p-7 space-y-6 text-slate-100"
+        className="rounded-2xl bg-white border border-slate-200 shadow-xl p-5 sm:p-7 space-y-6 text-slate-900"
       >
         {/* Header bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-800/80">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 shadow-md shadow-sky-500/10 shrink-0">
+            <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-center text-orange-600 shadow-xs shrink-0">
               <Archive className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+                <h3 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
                   Clips ZIP Archive Output
                 </h3>
-                <span className="px-2.5 py-0.5 rounded-full bg-sky-500/15 text-sky-300 text-[11px] font-bold border border-sky-500/30 shadow-xs">
+                <span className="px-2.5 py-0.5 rounded-full bg-orange-50 text-orange-700 text-[11px] font-bold border border-orange-200 shadow-xs">
                   {matches.length} Video Clips
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[11px] font-semibold border border-emerald-500/30">
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200">
                   Timeline Synced
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 mt-0.5">
                 Every slide image was rendered into its own video clip matching its exact timeline duration and audio sync.
               </p>
             </div>
@@ -327,7 +327,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
             <button
               type="button"
               onClick={handleDownload}
-              className="px-6 py-3 rounded-xl font-bold text-xs sm:text-sm bg-gradient-to-r from-sky-500 via-blue-600 to-sky-600 hover:from-sky-400 hover:to-blue-500 text-white shadow-lg shadow-sky-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer flex items-center gap-2.5"
+              className="px-6 py-3 rounded-xl font-bold text-xs sm:text-sm bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 text-white shadow-md shadow-orange-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer flex items-center gap-2.5"
             >
               <Download className="w-4 h-4" />
               <span>Download Clips Archive (.zip)</span>
@@ -337,26 +337,26 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
 
         {/* Specs Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-4xl mx-auto pt-1">
-          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center space-y-1">
-            <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total Duration</div>
-            <div className="font-mono text-sm font-bold text-sky-400">{formatTime(videoDuration)}</div>
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-center space-y-1 shadow-2xs">
+            <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Total Duration</div>
+            <div className="font-mono text-sm font-bold text-orange-600">{formatTime(videoDuration)}</div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center space-y-1">
-            <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Resolution</div>
-            <div className="font-mono text-sm font-bold text-emerald-400">
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-center space-y-1 shadow-2xs">
+            <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Resolution</div>
+            <div className="font-mono text-sm font-bold text-slate-900">
               {resolution === '1080p' ? '1920 × 1080' : '1280 × 720'}
             </div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center space-y-1">
-            <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Package Size</div>
-            <div className="font-mono text-sm font-bold text-indigo-400">{fileSizeMb} MB</div>
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-center space-y-1 shadow-2xs">
+            <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Package Size</div>
+            <div className="font-mono text-sm font-bold text-slate-900">{fileSizeMb} MB</div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center space-y-1">
-            <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Slide Clips</div>
-            <div className="font-mono text-sm font-bold text-amber-400">{matches.length} Clips</div>
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-center space-y-1 shadow-2xs">
+            <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Slide Clips</div>
+            <div className="font-mono text-sm font-bold text-orange-600">{matches.length} Clips</div>
           </div>
         </div>
 
@@ -442,28 +442,28 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
   return (
     <section
       id="output-section"
-      className="rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5 sm:p-7 space-y-6 text-slate-100"
+      className="rounded-2xl bg-white border border-slate-200 shadow-xl p-5 sm:p-7 space-y-6 text-slate-900"
     >
       {/* Header bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-800/80">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-md shadow-emerald-500/10 shrink-0">
+          <div className="w-11 h-11 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-center text-orange-600 shadow-xs shrink-0">
             <CheckCircle2 className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+              <h3 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
                 Synchronized Video Output
               </h3>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[11px] font-bold border border-emerald-500/30 shadow-xs">
+              <span className="px-2.5 py-0.5 rounded-full bg-orange-50 text-orange-700 text-[11px] font-bold border border-orange-200 shadow-xs">
                 30 FPS CFR Ready
               </span>
-              <span className="px-2.5 py-0.5 rounded-full bg-sky-500/15 text-sky-300 text-[11px] font-semibold border border-sky-500/30">
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200">
                 FastStart Enabled
               </span>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Optimized constant frame-rate stream with instant seeking and high-fidelity English timing.
+            <p className="text-xs text-slate-500 mt-0.5">
+              Optimized constant frame-rate stream with instant seeking and high-fidelity speech synchronization.
             </p>
           </div>
         </div>
@@ -473,7 +473,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
           <button
             type="button"
             onClick={handleDownload}
-            className="px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-white shadow-lg shadow-emerald-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer flex items-center gap-2"
+            className="px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 text-white shadow-md shadow-orange-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer flex items-center gap-2"
           >
             <Download className="w-4 h-4" />
             <span>Download Video (.mp4)</span>

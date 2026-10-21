@@ -538,6 +538,45 @@ async function renderCanvasFallback(
   return await renderWithCanvasMediaRecorder(matches, options, logs);
 }
 
+async function createFallbackCanvasBlob(
+  slideNum: number,
+  textSnippet: string,
+  width = 1280,
+  height = 720
+): Promise<Blob> {
+  if (typeof document === 'undefined') {
+    return new Blob([], { type: 'image/jpeg' });
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const grad = ctx.createLinearGradient(0, 0, width, height);
+    grad.addColorStop(0, '#FFFFFF');
+    grad.addColorStop(1, '#FFF7ED');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = '#EA580C';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(24, 24, width - 48, height - 48);
+
+    ctx.fillStyle = '#EA580C';
+    ctx.font = 'bold 44px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Slide ${slideNum}`, width / 2, height / 2 - 30);
+
+    ctx.fillStyle = '#0F172A';
+    ctx.font = '22px sans-serif';
+    const cleanSnippet = textSnippet.length > 70 ? textSnippet.substring(0, 67) + '...' : textSnippet;
+    ctx.fillText(cleanSnippet, width / 2, height / 2 + 30);
+  }
+  return new Promise<Blob>((resolve) => {
+    canvas.toBlob((b) => resolve(b || new Blob()), 'image/jpeg', 0.95);
+  });
+}
+
 /**
  * Ultra-fast video generator using the local Native FFmpeg Engine via /api/render.
  * Bypasses slow browser WebAssembly to compile videos in 5 to 15 seconds.
@@ -648,18 +687,21 @@ export async function renderWithNativeServer(
 
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i];
-    if (!m.image) {
-      throw new Error(`Missing image for slide ${i + 1}`);
-    }
-    const filename = m.image.name || `slide_${i}.jpg`;
-    if (m.image.file) {
+    const filename = m.image?.name || `slide_${i + 1}.jpg`;
+    if (m.image && m.image.file) {
       formData.append('images', m.image.file, filename);
-    } else if (m.image.previewUrl) {
-      const resp = await fetch(m.image.previewUrl, { signal });
-      const blob = await resp.blob();
-      formData.append('images', blob, filename);
+    } else if (m.image && m.image.previewUrl) {
+      try {
+        const resp = await fetch(m.image.previewUrl, { signal });
+        const blob = await resp.blob();
+        formData.append('images', blob, filename);
+      } catch {
+        const fallbackBlob = await createFallbackCanvasBlob(i + 1, m.paragraph?.text || `Slide ${i + 1}`, targetW, targetH);
+        formData.append('images', fallbackBlob, `slide_${i + 1}_fallback.jpg`);
+      }
     } else {
-      throw new Error(`No image data available for slide ${i + 1}`);
+      const fallbackBlob = await createFallbackCanvasBlob(i + 1, m.paragraph?.text || `Slide ${i + 1}`, targetW, targetH);
+      formData.append('images', fallbackBlob, `slide_${i + 1}_fallback.jpg`);
     }
   }
 

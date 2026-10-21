@@ -2,11 +2,15 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import {
-  ChevronLeft,
-  ChevronRight,
-  Maximize2,
+  FolderOpen,
   Sliders,
   Sparkles,
+  X,
+  Layers,
+  ChevronRight,
+  Maximize2,
+  Film,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   SyncMatch,
@@ -81,8 +85,9 @@ export const UnifiedStudioWorkspace2: React.FC<UnifiedStudioWorkspace2Props> = (
   const [selectedSlideIndex, setSelectedSlideIndex] = useState<number>(0);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState<boolean>(true);
-  const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(true);
+  
+  // Clean Embedded UI: Flyout Drawers instead of permanent bulky columns!
+  const [activeDrawer, setActiveDrawer] = useState<'media' | 'inspector' | null>(null);
 
   // Extract review items
   const reviewItems = useMemo(() => {
@@ -142,9 +147,12 @@ export const UnifiedStudioWorkspace2: React.FC<UnifiedStudioWorkspace2Props> = (
       updated[index].isManualEdit = true;
       updated[index].status = 'confirmed';
 
-      for (let j = index + 1; j < updated.length; j++) {
-        updated[j].startTime = Number((updated[j].startTime + diff).toFixed(3));
-        updated[j].endTime = Number((updated[j].endTime + diff).toFixed(3));
+      // Ripple diff to remaining slides
+      if (diff !== 0 && index < updated.length - 1) {
+        for (let j = index + 1; j < updated.length; j++) {
+          updated[j].startTime = Number((updated[j].startTime + diff).toFixed(3));
+          updated[j].endTime = Number((updated[j].endTime + diff).toFixed(3));
+        }
       }
 
       onUpdateMatches(updated);
@@ -152,16 +160,13 @@ export const UnifiedStudioWorkspace2: React.FC<UnifiedStudioWorkspace2Props> = (
     [matches, onUpdateMatches]
   );
 
-  // Update assigned image for a slide
+  // Update slide image
   const handleUpdateSlideImage = useCallback(
     (index: number, image: ImageItem | null) => {
       if (index < 0 || index >= matches.length) return;
       const updated = matches.map((m) => ({ ...m }));
       updated[index].image = image;
       updated[index].isManualEdit = true;
-      if (image) {
-        updated[index].warning = undefined;
-      }
       onUpdateMatches(updated);
     },
     [matches, onUpdateMatches]
@@ -202,53 +207,74 @@ export const UnifiedStudioWorkspace2: React.FC<UnifiedStudioWorkspace2Props> = (
   }, [matches, onUpdateMatches]);
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0B0F14] text-[#F1F5F9] select-none">
-      {/* UPPER SECTION: LEFT PANEL (SOURCES) | CENTER (PREVIEW) | RIGHT (INSPECTOR) */}
-      <div className="flex-1 flex min-h-0 overflow-hidden relative">
-        {/* LEFT DOCKED PANEL: SOURCES & ASSETS */}
-        {isLeftPanelOpen && (
-          <div className="w-80 sm:w-88 shrink-0 h-full overflow-hidden">
-            <SourceMediaPanel
-              voiceoverFile={voiceoverFile}
-              voiceoverUrl={voiceoverUrl}
-              voiceoverDuration={voiceoverDuration}
-              onVoiceoverFileChange={onVoiceoverFileChange}
-              rawScript={rawScript}
-              scriptSplitMode={scriptSplitMode}
-              paragraphs={paragraphs}
-              onScriptChange={onScriptChange}
-              onSplitModeChange={onSplitModeChange}
-              rawVtt={rawVtt}
-              cues={cues}
-              onVttChange={onVttChange}
-              images={images}
-              onImagesChange={onImagesChange}
-              selectedSlideIndex={selectedSlideIndex}
-              onAssignImageToSlide={(img, idx) => handleUpdateSlideImage(idx, img)}
-              reviewItems={reviewItems}
-              matches={matches}
-              onSelectSlide={(idx) => {
-                setSelectedSlideIndex(idx);
-                if (matches[idx]) setCurrentTime(matches[idx].startTime);
-              }}
-              onConfirmAllTiming={handleConfirmAllTiming}
-            />
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-50 text-slate-900 select-none relative">
+      {/* EMBEDDED CONTEXTUAL ACTION BAR */}
+      <div className="h-11 px-4 border-b border-slate-200 bg-white flex items-center justify-between gap-3 shrink-0 shadow-2xs z-20">
+        <div className="flex items-center gap-2">
+          {/* Media & Sources Drawer Toggle */}
+          <button
+            type="button"
+            onClick={() => setActiveDrawer(activeDrawer === 'media' ? null : 'media')}
+            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-2 transition cursor-pointer shadow-2xs ${
+              activeDrawer === 'media'
+                ? 'border-orange-500 bg-orange-50 text-orange-700 shadow-orange-500/10'
+                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+            }`}
+            title="Open Media, Script, VTT & Images Manager"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-orange-600" />
+            <span>Media &amp; Assets</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-mono text-[10px]">
+              {images.length} imgs {voiceoverFile ? '• audio' : ''}
+            </span>
+          </button>
+
+          {/* Slide Inspector Drawer Toggle */}
+          <button
+            type="button"
+            onClick={() => setActiveDrawer(activeDrawer === 'inspector' ? null : 'inspector')}
+            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-2 transition cursor-pointer shadow-2xs ${
+              activeDrawer === 'inspector'
+                ? 'border-orange-500 bg-orange-50 text-orange-700 shadow-orange-500/10'
+                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+            }`}
+            title="Open Slide Inspector for fine-tuning timing & Ken Burns motion"
+          >
+            <Sliders className="w-3.5 h-3.5 text-orange-600" />
+            <span>Slide Details</span>
+            {selectedSlide && (
+              <span className="px-1.5 py-0.2 rounded bg-orange-100/60 text-orange-800 font-mono text-[10px]">
+                #{selectedSlideIndex + 1}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Center: Smart Auto-Sync Action */}
+        <div className="flex items-center gap-2">
+          {onAutoSyncOptimize && (
+            <button
+              type="button"
+              onClick={onAutoSyncOptimize}
+              className="px-3 py-1 rounded-lg border border-orange-200 bg-orange-50/70 hover:bg-orange-100 text-orange-700 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+              title="One-click intelligent alignment between voiceover cues and slides"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-orange-600" />
+              <span>Smart Auto-Sync</span>
+            </button>
+          )}
+
+          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span>{matches.length} Slides Synchronized</span>
           </div>
-        )}
+        </div>
+      </div>
 
-        {/* Left Panel Collapse Toggle */}
-        <button
-          type="button"
-          onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
-          className="absolute left-0 top-1/2 -translate-y-1/2 z-20 w-4 h-12 rounded-r-md bg-[#18222D] hover:bg-[#202C38] border-y border-r border-[#2B3947] text-[#748396] hover:text-[#F1F5F9] flex items-center justify-center transition shadow-lg cursor-pointer"
-          style={{ left: isLeftPanelOpen ? '20rem' : '0' }}
-          title={isLeftPanelOpen ? 'Collapse sources panel' : 'Expand sources panel'}
-        >
-          {isLeftPanelOpen ? <ChevronLeft className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-        </button>
-
-        {/* CENTER PREVIEW PLAYER */}
-        <div className="flex-1 min-w-0 h-full overflow-hidden">
+      {/* UPPER SECTION: UNCLUTTERED FULL-WIDTH PREVIEW STAGE */}
+      <div className="flex-1 flex min-h-0 overflow-hidden relative">
+        {/* CENTER HERO PREVIEW PLAYER (occupies 100% of workspace width) */}
+        <div className="flex-1 min-w-0 h-full overflow-hidden bg-slate-50">
           <StudioPreviewPlayer
             matches={matches}
             cues={cues}
@@ -269,32 +295,84 @@ export const UnifiedStudioWorkspace2: React.FC<UnifiedStudioWorkspace2Props> = (
           />
         </div>
 
-        {/* Right Inspector Collapse Toggle */}
-        <button
-          type="button"
-          onClick={() => setIsInspectorOpen(!isInspectorOpen)}
-          className="absolute right-0 top-1/2 -translate-y-1/2 z-20 w-4 h-12 rounded-l-md bg-[#18222D] hover:bg-[#202C38] border-y border-l border-[#2B3947] text-[#748396] hover:text-[#F1F5F9] flex items-center justify-center transition shadow-lg cursor-pointer"
-          style={{ right: isInspectorOpen ? '20rem' : '0' }}
-          title={isInspectorOpen ? 'Collapse inspector panel' : 'Expand inspector panel'}
-        >
-          {isInspectorOpen ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
-        </button>
+        {/* EMBEDDED SLIDE-OVER DRAWER: MEDIA & SOURCES (Slides in over canvas on demand) */}
+        {activeDrawer === 'media' && (
+          <div className="absolute inset-y-0 left-0 z-40 w-96 max-w-full bg-white border-r border-slate-200 shadow-2xl flex flex-col animate-in slide-in-from-left duration-200">
+            <div className="h-10 px-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                <FolderOpen className="w-4 h-4 text-orange-600" />
+                <span>Media &amp; Assets Manager</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveDrawer(null)}
+                className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition cursor-pointer"
+                title="Close drawer (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <SourceMediaPanel
+                voiceoverFile={voiceoverFile}
+                voiceoverUrl={voiceoverUrl}
+                voiceoverDuration={voiceoverDuration}
+                onVoiceoverFileChange={onVoiceoverFileChange}
+                rawScript={rawScript}
+                scriptSplitMode={scriptSplitMode}
+                paragraphs={paragraphs}
+                onScriptChange={onScriptChange}
+                onSplitModeChange={onSplitModeChange}
+                rawVtt={rawVtt}
+                cues={cues}
+                onVttChange={onVttChange}
+                images={images}
+                onImagesChange={onImagesChange}
+                selectedSlideIndex={selectedSlideIndex}
+                onAssignImageToSlide={(img, idx) => handleUpdateSlideImage(idx, img)}
+                reviewItems={reviewItems}
+                matches={matches}
+                onSelectSlide={(idx) => {
+                  setSelectedSlideIndex(idx);
+                  if (matches[idx]) setCurrentTime(matches[idx].startTime);
+                }}
+                onConfirmAllTiming={handleConfirmAllTiming}
+              />
+            </div>
+          </div>
+        )}
 
-        {/* RIGHT DOCKED PANEL: SLIDE INSPECTOR */}
-        {isInspectorOpen && (
-          <div className="w-80 shrink-0 h-full overflow-hidden">
-            <SlideInspector
-              slide={selectedSlide}
-              slideIndex={selectedSlideIndex}
-              totalSlides={matches.length}
-              voiceoverUrl={voiceoverUrl}
-              motionSettings={motionSettings}
-              onUpdateSlideTiming={handleUpdateSlideTiming}
-              onUpdateSlideDuration={handleUpdateSlideDuration}
-              onUpdateSlideImage={handleUpdateSlideImage}
-              onUpdateSlideZoomDirection={handleUpdateZoomDirection}
-              onConfirmSlideTiming={handleConfirmSlideTiming}
-            />
+        {/* EMBEDDED SLIDE-OVER DRAWER: SLIDE INSPECTOR (Slides in over canvas on demand) */}
+        {activeDrawer === 'inspector' && (
+          <div className="absolute inset-y-0 right-0 z-40 w-88 max-w-full bg-white border-l border-slate-200 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+            <div className="h-10 px-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                <Sliders className="w-4 h-4 text-orange-600" />
+                <span>Slide #{selectedSlideIndex + 1} Inspector</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveDrawer(null)}
+                className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition cursor-pointer"
+                title="Close drawer (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <SlideInspector
+                slide={selectedSlide}
+                slideIndex={selectedSlideIndex}
+                totalSlides={matches.length}
+                voiceoverUrl={voiceoverUrl}
+                motionSettings={motionSettings}
+                onUpdateSlideTiming={handleUpdateSlideTiming}
+                onUpdateSlideDuration={handleUpdateSlideDuration}
+                onUpdateSlideImage={handleUpdateSlideImage}
+                onUpdateSlideZoomDirection={handleUpdateZoomDirection}
+                onConfirmSlideTiming={handleConfirmSlideTiming}
+              />
+            </div>
           </div>
         )}
       </div>
@@ -309,7 +387,9 @@ export const UnifiedStudioWorkspace2: React.FC<UnifiedStudioWorkspace2Props> = (
         isPlaying={isPlaying}
         onTogglePlay={() => setIsPlaying(!isPlaying)}
         activeSlideIndex={selectedSlideIndex}
-        onSelectSlide={(idx) => setSelectedSlideIndex(idx)}
+        onSelectSlide={(idx) => {
+          setSelectedSlideIndex(idx);
+        }}
         onUpdateMatches={onUpdateMatches}
         onAutoSyncOptimize={onAutoSyncOptimize}
       />
